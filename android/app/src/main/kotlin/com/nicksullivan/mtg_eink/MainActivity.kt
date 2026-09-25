@@ -1,4 +1,4 @@
-package com.nickd.mtg_eink
+package com.nicksullivan.mtg_eink
 
 import android.app.Activity
 import android.nfc.NfcAdapter

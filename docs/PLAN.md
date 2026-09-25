@@ -64,7 +64,7 @@ lib/
   nfc/gseries_protocol.dart       the command set — all panel knowledge lives here
   render/                         CustomPainter -> ui.Image -> exact four-colour pixels
   ui/home_page.dart
-android/app/src/main/kotlin/com/nickd/mtg_eink/MainActivity.kt
+android/app/src/main/kotlin/com/nicksullivan/mtg_eink/MainActivity.kt
 ```
 
 **Kotlin owns the radio and nothing else.** Reader mode and the presence-check delay cannot be set
@@ -214,6 +214,9 @@ and ideally art.
       18px bold today; judge it on the panel from across a table.
 - [x] Optional ability text: a wrapped text box between the type line and P/T that only appears
       when there is text, taking its height from the art. Shrinks 11px → 7px, then ellipsises.
+- [x] Preset creature art: a dropdown of 31 silhouettes from game-icons.net (CC BY 3.0 — the
+      credit is in Settings and must stay there), stored as SVG path data in
+      `lib/models/creature_art.dart`. Picking one changes only the art. "None" keeps the hatch.
 - [x] Save tokens to the library. Same `designs/` store; the index entry carries `kind: token` and
       the fields, so opening one lands in the MTG tab, editable. Entries without a kind are images.
 - [ ] Batch mode: hold a queue of tokens and write them one per tap, so a set of panels can be

@@ -136,4 +136,36 @@ void main() {
       expect(token.ability, '');
     });
   });
+
+  group('creature art', () {
+    testWidgets('replaces the hatch with the silhouette', (tester) async {
+      // A diagonal hatch puts ink in every row of the art box. A centred silhouette leaves the
+      // top rows clear wherever the art is wider than it is tall.
+      final hatched = await render(tester, const TokenContent());
+      final withArt = await render(tester, const TokenContent(art: 'goblin'));
+      final art = layout.art;
+
+      int inkIn(Uint8List frame, int y) {
+        var n = 0;
+        for (var x = art.left.ceil(); x < art.right.floor(); x++) {
+          if (codeAt(device, frame, x, y) == device.foregroundCode) n++;
+        }
+        return n;
+      }
+
+      final top = (art.top + 3).ceil();
+      expect(inkIn(hatched, top), greaterThan(0));
+      expect(inkIn(withArt, top), 0);
+      expect(inkIn(withArt, art.center.dy.floor()), greaterThan(0));
+    });
+
+    testWidgets('an unknown id falls back to the hatch', (tester) async {
+      final hatched = await render(tester, const TokenContent());
+      final unknown = await render(
+        tester,
+        const TokenContent(art: 'mind-flayer'),
+      );
+      expect(unknown, hatched);
+    });
+  });
 }

@@ -12,6 +12,7 @@ class TokenContent {
     this.power = '1',
     this.toughness = '1',
     this.ability = '',
+    this.art,
   });
 
   final String name;
@@ -25,12 +26,20 @@ class TokenContent {
   /// Rules text, e.g. "Flying, haste". May run to several lines; empty means no text box at all.
   final String ability;
 
+  /// A [CreatureArt] id for the art box, or null for the plain hatch.
+  ///
+  /// Stored as an id rather than the art itself, so saved tokens pick up any redrawn art.
+  final String? art;
+
   TokenContent copyWith({
     String? name,
     String? type,
     String? power,
     String? toughness,
     String? ability,
+    // A getter, so art can be cleared back to null — a plain `String?` can't tell "clear" from
+    // "leave alone".
+    ValueGetter<String?>? art,
   }) {
     return TokenContent(
       name: name ?? this.name,
@@ -38,6 +47,7 @@ class TokenContent {
       power: power ?? this.power,
       toughness: toughness ?? this.toughness,
       ability: ability ?? this.ability,
+      art: art == null ? this.art : art(),
     );
   }
 
@@ -47,6 +57,7 @@ class TokenContent {
     'power': power,
     'toughness': toughness,
     'ability': ability,
+    if (art != null) 'art': art,
   };
 
   factory TokenContent.fromJson(Map<String, Object?> json) => TokenContent(
@@ -56,6 +67,7 @@ class TokenContent {
     toughness: json['toughness'] as String? ?? '',
     // Tokens saved before ability text existed have none.
     ability: json['ability'] as String? ?? '',
+    art: json['art'] as String?,
   );
 
   @override
@@ -65,8 +77,9 @@ class TokenContent {
       other.type == type &&
       other.power == power &&
       other.toughness == toughness &&
-      other.ability == ability;
+      other.ability == ability &&
+      other.art == art;
 
   @override
-  int get hashCode => Object.hash(name, type, power, toughness, ability);
+  int get hashCode => Object.hash(name, type, power, toughness, ability, art);
 }

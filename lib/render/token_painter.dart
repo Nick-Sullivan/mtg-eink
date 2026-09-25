@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../models/creature_art.dart';
 import '../models/panel_device.dart';
 import '../models/token_content.dart';
 import 'canvas_painter.dart';
@@ -104,23 +105,28 @@ void paintToken(Canvas canvas, PanelDevice device, TokenContent token) {
     canvas.drawRRect(RRect.fromRectAndRadius(box, radius), paperFill);
   }
 
-  // The art box: a sparse diagonal hatch, so it reads as a picture area rather than a blank.
+  // The art box: the chosen creature, or with none chosen a sparse diagonal hatch, so it still
+  // reads as a picture area rather than a blank.
   canvas.drawRect(layout.art, paperFill);
-  canvas.save();
-  canvas.clipRect(layout.art);
-  final hatch = Paint()
-    ..color = ink
-    ..strokeWidth = math.max(1, u)
-    ..isAntiAlias = false;
   final art = layout.art;
-  for (var d = -art.height; d < art.width; d += 8 * u) {
-    canvas.drawLine(
-      Offset(art.left + d, art.bottom),
-      Offset(art.left + d + art.height, art.top),
-      hatch,
-    );
+  if (CreatureArt.byId(token.art) case final creature?) {
+    paintCreatureArt(canvas, creature, art.deflate(6 * u), ink);
+  } else {
+    canvas.save();
+    canvas.clipRect(art);
+    final hatch = Paint()
+      ..color = ink
+      ..strokeWidth = math.max(1, u)
+      ..isAntiAlias = false;
+    for (var d = -art.height; d < art.width; d += 8 * u) {
+      canvas.drawLine(
+        Offset(art.left + d, art.bottom),
+        Offset(art.left + d + art.height, art.top),
+        hatch,
+      );
+    }
+    canvas.restore();
   }
-  canvas.restore();
 
   final padding = 6 * u;
   _paintFitted(
@@ -161,6 +167,38 @@ void paintToken(Canvas canvas, PanelDevice device, TokenContent token) {
     weight: FontWeight.w800,
     centred: true,
   );
+}
+
+/// Draws [creature]'s silhouette as large as fits inside [box], centred, in [colour].
+///
+/// Fitted to the silhouette's own bounds rather than its 512 viewBox: the icons don't all fill
+/// their square, and on a 110-pixel-wide art box every pixel of a narrow one like the skeleton
+/// counts. The bounds include curve control points, so they can overshoot slightly — hence the
+/// clip.
+///
+/// Shared with the editor's dropdown, so the thumbnails there are the same drawing as the card.
+void paintCreatureArt(
+  Canvas canvas,
+  CreatureArt creature,
+  Rect box,
+  Color colour,
+) {
+  final path = creature.path;
+  final bounds = path.getBounds();
+  final scale = math.min(box.width / bounds.width, box.height / bounds.height);
+
+  canvas.save();
+  canvas.clipRect(box);
+  canvas.translate(box.center.dx, box.center.dy);
+  canvas.scale(scale);
+  canvas.translate(-bounds.center.dx, -bounds.center.dy);
+  canvas.drawPath(
+    path,
+    Paint()
+      ..color = colour
+      ..isAntiAlias = false,
+  );
+  canvas.restore();
 }
 
 /// Draws [text] on one line inside [box], vertically centred, shrinking the font until it fits.

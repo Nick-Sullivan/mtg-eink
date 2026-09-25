@@ -259,7 +259,7 @@ than trusting either reading.
 
 ## Log
 
-- **2026-09-26** — Renamed to **mtg-eink** (`com.nickd.mtg_eink`, installs as a new app; logcat
+- **2026-09-26** — Renamed to **mtg-eink** (`com.nicksullivan.mtg_eink`, installs as a new app; logcat
   tag `mtgeink`), new adaptive launcher icon, and an MTG token tab (see M8 in the plan).
 
 - **2026-09-25** — M0 run on hardware; see the baseline above. Vendor app fails to write, but the

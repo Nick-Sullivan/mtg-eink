@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/creature_art.dart';
 import '../models/panel_device.dart';
 
 /// Things you set once and then forget about.
@@ -65,6 +66,15 @@ class SettingsView extends StatelessWidget {
                 ),
               ),
           ],
+        ),
+        const Divider(height: 32),
+
+        // The creature art's licence (CC BY 3.0) requires this credit to be shown.
+        Text('Credits', style: titles.titleMedium),
+        const SizedBox(height: 8),
+        Text(
+          creatureArtCredit,
+          style: TextStyle(color: Colors.black.withValues(alpha: 0.6)),
         ),
       ],
     );

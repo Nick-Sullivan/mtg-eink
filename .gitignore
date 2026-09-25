@@ -42,3 +42,8 @@ flutter_*.png
 # Symbolication / obfuscation
 app.*.symbols
 app.*.map.json
+
+# Release signing (never commit)
+/android/key.properties
+/android/upload-keystore.jks
+pc-api-*.json

@@ -42,6 +42,11 @@ dependencies:
   # Somewhere to keep the saved design library.
   path_provider: ^2.1.4
 
+  # Parses the creature art's SVG path data into a Path synchronously, so the token painter can
+  # stay a plain synchronous paint function. The art is single-path silhouettes, so a full SVG
+  # renderer would be overkill.
+  path_drawing: ^1.0.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

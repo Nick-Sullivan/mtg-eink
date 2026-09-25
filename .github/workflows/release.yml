@@ -1,0 +1,98 @@
+name: Deploy to Google Play
+
+on:
+  # Every push to main ships to the internal testing track...
+  push:
+    branches: [main]
+    # ...unless it only touched docs, which can't change the app.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'store/**'
+  # Production is manual: Actions tab -> this workflow -> Run workflow.
+  workflow_dispatch:
+    inputs:
+      track:
+        description: 'Play track to deploy to'
+        type: choice
+        options: [production, internal]
+        default: production
+
+# Two pushes in quick succession would otherwise race each other's Play edits.
+concurrency:
+  group: play-release
+  cancel-in-progress: false
+
+env:
+  # Matches the local toolchain; bump both together.
+  FLUTTER_VERSION: 3.32.8
+  # Keeps versionCode monotonic across workflow re-runs and repo moves;
+  # bump this base if run numbers ever reset. Run numbers are scoped to this
+  # workflow FILE — renaming the file resets them, so don't.
+  VERSION_CODE_BASE: 1000
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          # Reuses Gradle's dependency + wrapper downloads between runs —
+          # the dominant cost of a cold appbundle build.
+          cache: gradle
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      # Pub packages, keyed to the lockfile.
+      - uses: actions/cache@v5
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ hashFiles('pubspec.lock') }}
+
+      # Don't ship a build that fails analysis or tests — especially on the
+      # manual production path. The suite is pure Dart: no device, no NFC.
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+      - name: Restore upload keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storeFile=upload-keystore.jks
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          EOF
+
+      - name: Build signed app bundle
+        run: |
+          # Fully automatic versioning — nothing to bump by hand.
+          # Version name is UTC build date + run number, so every deploy
+          # (including same-day ones) has a distinct, sortable name; the
+          # run number also ties a name back to its workflow run.
+          BUILD_NUMBER=$((VERSION_CODE_BASE + GITHUB_RUN_NUMBER))
+          BUILD_NAME="$(date -u +%Y.%m.%d).$GITHUB_RUN_NUMBER"
+          echo "Building $BUILD_NAME ($BUILD_NUMBER)"
+          flutter build appbundle --release \
+            --build-name="$BUILD_NAME" \
+            --build-number="$BUILD_NUMBER"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-release-bundle
+          path: build/app/outputs/bundle/release/app-release.aab
+
+      - name: Upload to Google Play
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.nicksullivan.mtg_eink
+          releaseFiles: build/app/outputs/bundle/release/app-release.aab
+          tracks: ${{ github.event_name == 'workflow_dispatch' && inputs.track || 'internal' }}
+          status: completed
