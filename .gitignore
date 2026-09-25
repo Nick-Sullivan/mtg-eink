@@ -1,6 +1,3 @@
-# Waveshare's closed-source SDK — not ours to redistribute. Download per the M0 checklist.
-android/app/libs/
-
 # Miscellaneous
 *.class
 *.log

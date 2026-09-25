@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../models/epaper_display.dart';
+import '../nfc/apdu.dart';
+import '../nfc/gseries_protocol.dart';
 import '../nfc/tag_events.dart';
+import '../render/canvas_painter.dart';
 
-/// M1 diagnostic screen. The number that matters is "held for" — 10+ seconds without the
-/// re-acquire count climbing means the panel is stable enough to write to.
+/// Compose something and push it to the panel.
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -12,16 +15,34 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  AdapterState? _adapter;
+  final _channel = ApduChannel();
+  late final _protocol = GSeriesProtocol(_channel);
+  final _textController = TextEditingController(text: 'HELLO');
+
   TagDetected? _tag;
-  int _heldMs = 0;
   TagLost? _lost;
-  int _bestHoldMs = 0;
+  AdapterState? _adapter;
+
+  PanelContent _content = const PanelContent(text: 'HELLO');
+
+  bool _writing = false;
+  int _percent = 0;
+  String? _status;
+  bool _failed = false;
 
   @override
   void initState() {
     super.initState();
     tagEvents().listen(_onEvent);
+    _textController.addListener(
+      () => setState(() => _content = _content.copyWith(text: _textController.text)),
+    );
+  }
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
   }
 
   void _onEvent(TagEvent event) {
@@ -32,138 +53,220 @@ class _HomePageState extends State<HomePage> {
         case TagDetected():
           _tag = event;
           _lost = null;
-          _heldMs = 0;
-        case TagHeld():
-          _heldMs = event.heldMs;
-          if (event.heldMs > _bestHoldMs) _bestHoldMs = event.heldMs;
         case TagLost():
           _lost = event;
-          if (event.heldMs > _bestHoldMs) _bestHoldMs = event.heldMs;
-          _heldMs = 0;
+        case TagHeld():
+        case WriteProgress():
+          break;
       }
+    });
+  }
+
+  Future<void> _write() async {
+    setState(() {
+      _writing = true;
+      _percent = 0;
+      _status = null;
+      _failed = false;
+    });
+
+    // Rendering happens before the session opens: the panel is powered by the phone's field, so
+    // there is no reason to hold it open while we lay out text.
+    final frame = await renderFrame(_content);
+
+    String status;
+    var failed = false;
+    try {
+      await _channel.open();
+      await _protocol.readDeviceInfoChecked();
+      await _protocol.writeFrame(
+        frame,
+        onProgress: (p) {
+          if (mounted) setState(() => _percent = p);
+        },
+      );
+      status = 'Done. The image stays on the panel now, even off the phone.';
+    } on NfcFailure catch (e) {
+      status = e.message;
+      failed = true;
+    } finally {
+      try {
+        await _channel.close();
+      } on NfcFailure {
+        // The write's own outcome matters more than failing to hand the tag back.
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _writing = false;
+      _status = status;
+      _failed = failed;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final present = _tag != null && _lost == null;
     final adapter = _adapter;
-    final tag = _tag;
-    final present = tag != null && _lost == null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('nfc-eink · M1 tag probe')),
+      appBar: AppBar(title: const Text('nfc-eink')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           if (adapter != null && !adapter.enabled)
-            const _Banner(
-              text: 'NFC is off. Turn it on in Settings.',
-              color: Colors.red,
-            ),
-          _StatusCard(present: present, heldMs: _heldMs, tag: tag),
-          const SizedBox(height: 16),
-          if (tag != null) ...[
-            _Row('UID', tag.uid),
-            _Row('Technologies', tag.techs.join(', ')),
-            _Row('ATQA / SAK', '${tag.atqa ?? '?'} / ${tag.sak ?? '?'}'),
-            _Row('Max transceive', '${tag.maxTransceiveLength ?? '?'} bytes'),
-            const Divider(height: 32),
-            _Row(
-              'Re-acquires',
-              '${tag.discoveryCount}',
-              warn: tag.discoveryCount > 1,
-            ),
-            _Row('Best hold', '${(_bestHoldMs / 1000).toStringAsFixed(1)} s'),
-            if (_lost case final lost?) _Row('Last loss', lost.reason),
-          ] else
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text(
-                'Hold the panel to the back of the phone.\n\n'
-                'Leave a 0.25–0.5 inch gap rather than pressing flat — at very close '
-                'range the coil over-couples and power transfer gets worse.',
-                style: TextStyle(height: 1.5),
+            const _Banner('NFC is off. Turn it on in Settings.', Colors.red),
+
+          // The panel is tall and narrow, so cap the preview's height rather than letting it eat
+          // the screen.
+          Center(
+            child: SizedBox(
+              height: 280,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.black26),
+                ),
+                child: PanelPreview(content: _content),
               ),
             ),
+          ),
+          const SizedBox(height: 20),
+
+          TextField(
+            controller: _textController,
+            maxLines: 3,
+            minLines: 1,
+            decoration: const InputDecoration(
+              labelText: 'Text',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          Row(
+            children: [
+              const SizedBox(width: 72, child: Text('Size')),
+              Expanded(
+                child: Slider(
+                  value: _content.fontSize,
+                  min: 10,
+                  max: 64,
+                  divisions: 54,
+                  label: _content.fontSize.round().toString(),
+                  onChanged: (v) =>
+                      setState(() => _content = _content.copyWith(fontSize: v)),
+                ),
+              ),
+            ],
+          ),
+
+          _ColourRow(
+            label: 'Text',
+            selected: _content.textColor,
+            onPick: (c) => setState(() => _content = _content.copyWith(textColor: c)),
+          ),
+          _ColourRow(
+            label: 'Background',
+            selected: _content.background,
+            onPick: (c) => setState(() => _content = _content.copyWith(background: c)),
+          ),
+          _ColourRow(
+            label: 'Border',
+            selected: _content.borderColor,
+            onPick: (c) => setState(() => _content = _content.copyWith(borderColor: c)),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Draw border'),
+            value: _content.border,
+            onChanged: (v) => setState(() => _content = _content.copyWith(border: v)),
+          ),
+
+          const Divider(height: 24),
+
+          FilledButton.icon(
+            onPressed: present && !_writing ? _write : null,
+            icon: const Icon(Icons.nfc),
+            label: Text(
+              _writing
+                  ? 'Writing…'
+                  : present
+                  ? 'Write to panel'
+                  : 'Hold the panel to the phone',
+            ),
+          ),
+
+          if (_writing) ...[
+            const SizedBox(height: 12),
+            LinearProgressIndicator(value: _percent / 100),
+            const SizedBox(height: 8),
+            Text('$_percent%', textAlign: TextAlign.center),
+            const SizedBox(height: 8),
+            const Text(
+              'Hold still — about 25 seconds.\n'
+              'A small gap works better than pressing flat.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontStyle: FontStyle.italic),
+            ),
+          ],
+
+          if (_status case final status?) ...[
+            const SizedBox(height: 12),
+            _Banner(status, _failed ? Colors.red : Colors.green),
+            if (_failed && present) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _writing ? null : _write,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Try again'),
+              ),
+            ],
+          ],
         ],
       ),
     );
   }
 }
 
-class _StatusCard extends StatelessWidget {
-  const _StatusCard({
-    required this.present,
-    required this.heldMs,
-    required this.tag,
+/// The four colours the panel can actually show.
+class _ColourRow extends StatelessWidget {
+  const _ColourRow({
+    required this.label,
+    required this.selected,
+    required this.onPick,
   });
 
-  final bool present;
-  final int heldMs;
-  final TagDetected? tag;
-
-  @override
-  Widget build(BuildContext context) {
-    final seconds = (heldMs / 1000).toStringAsFixed(1);
-    return Card(
-      color: present ? Colors.green.shade50 : Colors.grey.shade200,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              present ? 'Tag present' : (tag == null ? 'No tag' : 'Tag lost'),
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            if (present) ...[
-              const SizedBox(height: 8),
-              Text(
-                'held for $seconds s',
-                style: Theme.of(context).textTheme.displaySmall,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                heldMs >= 10000
-                    ? 'Stable — this is the M1 pass condition.'
-                    : 'Keep holding; we want 10 s unbroken.',
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Row extends StatelessWidget {
-  const _Row(this.label, this.value, {this.warn = false});
-
   final String label;
-  final String value;
-  final bool warn;
+  final Color selected;
+  final ValueChanged<Color> onPick;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 130,
-            child: Text(label, style: const TextStyle(color: Colors.black54)),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                color: warn ? Colors.orange.shade900 : null,
-                fontWeight: warn ? FontWeight.bold : null,
+          SizedBox(width: 96, child: Text(label)),
+          for (final colour in EPaperDisplay.palette)
+            Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: GestureDetector(
+                onTap: () => onPick(colour),
+                child: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: colour,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: colour == selected ? Colors.blue : Colors.black26,
+                      width: colour == selected ? 3 : 1,
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -171,7 +274,7 @@ class _Row extends StatelessWidget {
 }
 
 class _Banner extends StatelessWidget {
-  const _Banner({required this.text, required this.color});
+  const _Banner(this.text, this.color);
 
   final String text;
   final Color color;
@@ -180,7 +283,7 @@ class _Banner extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 4),
       padding: const EdgeInsets.all(12),
       color: color.withValues(alpha: 0.12),
       child: Text(text, style: TextStyle(color: color)),

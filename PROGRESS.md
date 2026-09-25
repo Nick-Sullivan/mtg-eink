@@ -5,9 +5,66 @@ The milestone checklists live in [`docs/PLAN.md`](docs/PLAN.md); tick them there
 
 ## Status
 
-**Current milestone:** M1 — **passed on hardware.** Held 12 s unbroken on the Pixel 10a, UID shown,
-removal detected within ~1 s.
-**Next:** M2 — download `NFC.jar`, `javap` the obfuscated names, wire the shim, write a bitmap.
+**Current milestone: OUR APP WRITES TO THE PANEL.** 2026-09-25. Full sequence confirmed on
+hardware — select, unlock, device info, 38 data blocks all `9000`, refresh, poll to completion —
+with no vendor code involved. Protocol and packing are pure Dart; Kotlin only carries bytes.
+
+**Next:** confirm whether the panel is really monochrome (see below), then build the real renderer.
+
+### The panel's own device info
+
+```
+>> 00 A4 04 00 07 D2 76 00 00 85 01 01     << 90 00
+>> F0 D8 01 FE 05 00 00 00 00 00           << 6A 86     (ignored, as the vendor app does)
+>> 00 D1 00 00 00
+<< A0 07 F0 07 20 02 50 00 80
+   A1 07 01 12 00 30 FF FF FF
+   B1 01 1A   B2 01 14   B3 01 00
+   C0 09 "waveshare"   C1 04 D2 48 58 52   D1 07 01 20 00 00 00 00 00   90 00
+>> F0 D8 00 00 05 00 00 00 00 0E           << "4_color Screen" 90 00
+```
+
+Decoded: manufacturer `F0`, **592 x 128**, refreshScan 1 (horizontal), size 1 plane,
+**colourCount 2**, black = 0, white = 1, picture capacity 26, user data 20, no battery,
+appID "waveshare", UID D2485852, compression off.
+
+**Resolved — the panel lies about itself.** It reports 2 colours, but writing all four 2-bit codes
+produces all four colours. The frame is **296 rows x 32 bytes, 2 bits per pixel**, and the codes are
+`00` black, `01` white, `10` yellow, `11` red. Full detail in `docs/protocol.md`.
+
+Getting there took three probes and two wrong theories, and the lesson is the same each time:
+**photograph the panel rather than describing it.** A photo pulled off the phone with `adb` settled
+in one look what several rounds of prose description had left ambiguous.
+
+### Measured timings (2.9" G, Pixel 10a)
+
+| phase | time |
+|---|---|
+| preamble | ~0.05 s |
+| 38 data blocks | **1.6 s** |
+| refresh + poll | **21.4 s** |
+
+The refresh dominates, so progress must be weighted by time, not by steps — otherwise the bar races
+to 80% and appears to hang.
+
+### The panel sometimes comes up confused
+
+Occasionally the preamble returns a well-formed but nonsense info block — dimensions of 52032,
+zeroed capacities, missing appID — and then refuses the first data block with `6A86`. Lifting the
+phone away for a few seconds clears it. `readDeviceInfoChecked` now bounds-checks the dimensions and
+retries rather than spending 20 seconds discovering the problem at block 0. Root cause unknown.
+
+### Hardware gate
+
+ Waveshare's current app
+(`com.waveshera.epaper`, "WaveShare NFC", built 2025-11-06) **writes to the panel from the Pixel
+10a**. The panel works, the phone works, and the plan's whole `NFC.jar` premise was simply aimed at
+the wrong product.
+**Next:** decompile that APK, document its APDU command set, then build our writer against it.
+
+Note this contradicts Waveshare's own documentation, which says in several places that the app
+"does NOT support Samsung, Google, and Sony mobile phones", and lists only Xiaomi/Redmi/Huawei/
+OnePlus/OPPO/VIVO as tested. On a Pixel 10a it works. Treat that warning as stale, not predictive.
 
 **M0 verdict:** misleading, and largely a false alarm — see the vendor-app crash below.
 **M1 verdict:** pass. The one finding that made it pass is the presence-check delay; see below.
@@ -87,6 +144,93 @@ passing on the same phone and panel supports it.
 conflicting SAK values, so NFC Tools may be listing loosely. M1 reports the real ATQA/SAK from
 `NfcA`, which will settle it. If the UID turns out to look like an ordinary NTAG sticker rather than
 a display driver chip, the vendor app's "take off the sticker" message deserves a second look.
+
+## The panel is a Type 4 tag, and the JAR can't talk to it
+
+This is the big finding of 2026-09-25 and it invalidates part of the plan.
+
+`NFC.jar` drives the panel with raw **NfcA** commands prefixed `0xCD` (decompiled — see
+`docs/protocol.md`). Our panel does not answer those. Measured with the in-app protocol probe:
+
+| Transport | Result |
+|---|---|
+| `NfcA.transceive` | every command throws `TagLostException`, including Ultralight `30 04` |
+| `IsoDep.transceive` | every command answers `67 00` — ISO 7816-4 for "wrong length" |
+
+`67 00` means the panel is a **smartcard-style ISO 14443-4 device that only accepts APDUs**. Raw
+NFC-A frames are invalid once a tag is activated into ISO-DEP, which is exactly why NfcA reports
+"tag lost" rather than returning an error.
+
+Confirmed identity:
+
+```
+ATS historical:  90 D2 48 58 52 00      (embeds the same D2485852 seen as the UID)
+payment (PPSE):  67 00                  — not a bank card
+NDEF Type 4:     90 00  ACCEPTED        — it IS an NFC Forum Type 4 tag
+IsoDep maxTransceiveLength: 65279       — extended-length ISO-DEP
+NfcA  maxTransceiveLength: 253
+```
+
+Ruled out along the way: that we were reading some *other* tag in the field (a wallet card).
+Moving the panel away reports "tag lost", so the tag under test is definitely the panel.
+
+**Consequence:** Waveshare's own app was never going to work — it isn't a power problem, a phone
+problem, or a technique problem. It speaks a protocol this hardware doesn't implement. Every M0
+symptom now has an explanation.
+
+**Consequence for the plan:** Phase A as written (drive the panel through `NFC.jar`) cannot work
+for this unit. The JAR is still useful as documentation of the *older* protocol, but it is not a
+path to a working write here. Phase B stops being an optional tidy-up and becomes the only route.
+
+## It isn't a Waveshare-protocol panel at all
+
+The panel is **red/yellow/black/white — four colours**. Waveshare's NFC e-paper line has seven
+types and **none of them is four-colour**; type 7 ("2.9 B") is three-colour and still uses the
+`0xCD`-over-NfcA protocol. So this was never the product the plan was written against, whatever the
+Amazon AU listing called it.
+
+Identified as **Good Display GDN029F** — 2.9", 128x296, black/white/red/yellow, passive NFC ESL:
+
+- Vendor app is **NFC-D3-Pro**, not Waveshare's NFCTag.
+  `https://www.e-paper-display.com/NFC-D3-Pro.apk`, also on Play Store.
+- Good Display ship **D-series and G-series** labels with *different apps*. Using the wrong app
+  "may cause communication errors". Our unit has no model number printed on it, so if NFC-D3-Pro
+  misbehaves, the G-series app is the next thing to try.
+- They also mention a PC-side "ImageToNFC" tool and a technical manual — worth chasing, because a
+  documented command set would make our app straightforward instead of a reverse-engineering job.
+- **Vendor caveat: "Not currently supported on Samsung or Google phones."** A Pixel 10a is a Google
+  phone. M1 held a session for 12 s, so the radio side looks fine, but this is on the record.
+
+### What the plan's remaining milestones should become
+
+M2-M6 as written are all premised on `NFC.jar`. For this hardware the shape is:
+
+1. Confirm NFC-D3-Pro can write to the panel from the Pixel. **This is the new M0-style gate** — if
+   the vendor's own current app can't drive it, that's the real answer, not a software problem.
+2. If it works, decompile *that* APK the way we did `NFC.jar` (CFR worked well) and document the
+   APDU command set in `docs/protocol.md`.
+3. Then build our writer against that, in Dart or Kotlin. There is no JAR to wrap this time, so the
+   Phase A / Phase B split collapses into one phase.
+
+Also note the renderer changes: four colours, not 1bpp black/white. `CLAUDE.md`'s "render pure
+black/white only" and the 4,736-byte frame size are both wrong for this panel.
+
+## Device-info format (from `IUtils.loadDeviceInfo` in the vendor APK)
+
+The two info responses are concatenated as hex and parsed as a TLV-ish block:
+
+| offset | meaning |
+|---|---|
+| byte 0 | `A0` marks a valid info block |
+| byte 1 | length; the rest of the parse continues at `bytes[1] + 2` |
+| byte 2 | manufacturer code (`80` weixinnuo, `00` jiaxian, `10` yuantai, `20` aoyi, `30` weifeng, `40` PDI, `60` JDF, `70` DKE, `F0` other) |
+| byte 4 | colour code: `20` = 2-colour, `30`/`31` = 3-colour, otherwise the count is the high nibble (`40` = 4-colour) |
+| hex chars 10-14 | first dimension |
+| hex chars 14-18 | second dimension (`124` is special-cased to `122`) |
+
+**Watch the assignment: the app does `setWidth(secondValue)` and `setHeight(firstValue)`** — they
+are swapped relative to the order they appear in. Worth verifying against the physical panel rather
+than trusting either reading.
 
 ## Open questions
 

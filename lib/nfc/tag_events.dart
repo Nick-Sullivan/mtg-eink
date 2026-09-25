@@ -19,8 +19,10 @@ sealed class TagEvent {
         atqa: map['atqa'] as String?,
         sak: map['sak'] as int?,
         maxTransceiveLength: map['maxTransceiveLength'] as int?,
+        ats: map['ats'] as String?,
       ),
       'held' => TagHeld(heldMs: map['heldMs'] as int? ?? 0),
+      'progress' => WriteProgress(percent: map['percent'] as int? ?? 0),
       _ => TagLost(
         reason: map['reason'] as String? ?? 'unknown',
         heldMs: map['heldMs'] as int? ?? 0,
@@ -44,6 +46,7 @@ class TagDetected extends TagEvent {
     this.atqa,
     this.sak,
     this.maxTransceiveLength,
+    this.ats,
   });
 
   final String uid;
@@ -54,12 +57,22 @@ class TagDetected extends TagEvent {
   final String? atqa;
   final int? sak;
   final int? maxTransceiveLength;
+
+  /// ISO-DEP historical bytes. Ours reads `90 D2 48 58 52 00`.
+  final String? ats;
 }
 
 class TagHeld extends TagEvent {
   const TagHeld({required this.heldMs});
 
   final int heldMs;
+}
+
+/// Emitted while the SDK is pushing a bitmap. 0-100.
+class WriteProgress extends TagEvent {
+  const WriteProgress({required this.percent});
+
+  final int percent;
 }
 
 class TagLost extends TagEvent {
