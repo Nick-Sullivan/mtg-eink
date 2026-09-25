@@ -61,13 +61,36 @@ jobs:
       - run: flutter test
 
       - name: Restore upload keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/upload-keystore.jks
+          # A missing or misnamed secret expands to an empty string, which otherwise surfaces much
+          # later as an opaque Gradle signing error. Name the culprit up front instead.
+          missing=0
+          for name in KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD PLAY_JSON; do
+            if [ -z "${!name}" ]; then echo "::error::Secret for $name is empty or not set"; missing=1; fi
+          done
+          [ "$missing" = 0 ] || exit 1
+
+          # Tolerates line wrapping or stray whitespace from the paste.
+          echo "$KEYSTORE_BASE64" | tr -d ' \r\n' | base64 -d > android/upload-keystore.jks
+          echo "Keystore: $(stat -c %s android/upload-keystore.jks) bytes"
+
+          # Opens the store and the key with the given passwords and alias, so a wrong one fails
+          # here with keytool's own message rather than inside bundletool.
+          keytool -list -keystore android/upload-keystore.jks \
+            -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" > /dev/null \
+            || { echo "::error::Keystore, store password or alias is wrong (see keytool output above)"; exit 1; }
+
           cat > android/key.properties <<EOF
           storeFile=upload-keystore.jks
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
           EOF
 
       - name: Build signed app bundle
