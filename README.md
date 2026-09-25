@@ -1,74 +1,45 @@
 # mtg-eink
 
-Android app that writes text, pictures and Magic: The Gathering tokens to a Waveshare 2.9" (G)
-NFC-powered e-paper display. See [CLAUDE.md](CLAUDE.md) and [docs/PLAN.md](docs/PLAN.md) for how
-it works.
+Put Magic: The Gathering tokens, pictures and text on a battery-free e-ink display, straight from
+your Android phone.
 
-## Releasing to Google Play
+The display has no battery and no wires. Hold it against the back of your phone and the phone
+powers it over NFC while it draws. Take it away and the picture stays, indefinitely, without
+power. It's handy for tokens: make a 3/3 Beast or a pile of 1/1 Goblins, write each one to a
+display, and put them on the table.
 
-Every push to `main` (except docs-only changes) runs `.github/workflows/release.yml`: analyze,
-test, build a signed bundle, upload to the Play **internal testing** track. Production is manual:
-Actions → *Deploy to Google Play* → Run workflow → `production`.
+## What you need
 
-Version names and codes are automatic (`YYYY.MM.DD.<run>`, code `1000 + run`). Nothing to bump.
+- A **Waveshare 2.9" NFC-Powered e-Paper (G)**, the four-colour one (black, white, red, yellow).
+  Other Waveshare NFC displays use a different protocol and won't work.
+- An **Android phone with NFC**.
 
-### One-time setup
+## What it can do
 
-The upload keystore and Play service account are shared with `scryfall_app`.
+- **MTG tokens.** Fill in a name, type line, power/toughness and optional rules text, and pick
+  creature art from 30-odd presets (Goblin, Zombie, Angel, Dragon, Soldier...).
+- **Pictures.** Choose a photo, crop it, and the app converts it to the display's four colours.
+- **Text.** Big, simple labels in any of the four colours.
+- **Saved designs.** Keep tokens and pictures in a library and rewrite them whenever you need them.
 
-1. **GitHub secrets** (repo → Settings → Secrets and variables → Actions):
+## Writing to the display
 
-   | Secret | Value |
-   |---|---|
-   | `ANDROID_KEYSTORE_BASE64` | base64 of `upload-keystore.jks` |
-   | `KEYSTORE_PASSWORD` | keystore password |
-   | `KEY_ALIAS` | `upload` |
-   | `KEY_PASSWORD` | key password |
-   | `PLAY_SERVICE_ACCOUNT_JSON` | full contents of the service account JSON key |
+1. Make something in the Text, Image or MTG tab.
+2. Tap **Write to panel**.
+3. Hold the display flat against the back of your phone, near the NFC antenna. On a Pixel that's
+   the middle of the back.
+4. Keep it still for about 20 seconds while it redraws. If it slips, just try again. A missed write
+   doesn't harm the display.
 
-   Base64 on Windows:
-   `[Convert]::ToBase64String([IO.File]::ReadAllBytes("upload-keystore.jks")) | Set-Clipboard`
+## Privacy
 
-2. **Play Console → Create app.** App, Free. The package name `com.nicksullivan.mtg_eink` gets
-   fixed by the first upload and can never change.
+The app needs no internet access and collects nothing. See the
+[privacy policy](docs/privacy-policy.html).
 
-3. **Grant the service account access** to the new app: Play Console → Users and permissions →
-   the service account → Manage → *App permissions* → add mtg-eink with release permissions.
+## Credits
 
-4. **App content** (Play Console → Policy → App content): privacy policy URL (see below), app
-   access (all features available without login), ads (none), content rating questionnaire,
-   target audience (not children), data safety (no data collected or shared).
+Creature art from [game-icons.net](https://game-icons.net) by Lorc, Delapouite, Skoll, Caro
+Asercion and Cathelineau, licensed [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
 
-5. **Store listing**: name (30 chars), short description (80), full description, 512×512 icon,
-   1024×500 feature graphic, at least 2 phone screenshots.
-
-6. **Upload the first bundle by hand.** Play won't accept API uploads until a first release exists.
-   Put `upload-keystore.jks` in `android/` and create `android/key.properties` (both gitignored):
-
-   ```properties
-   storeFile=upload-keystore.jks
-   storePassword=...
-   keyAlias=upload
-   keyPassword=...
-   ```
-
-   Then `flutter build appbundle --release --build-number=1`, and in Play Console → Testing →
-   Internal testing → Create release, upload
-   `build/app/outputs/bundle/release/app-release.aab` and roll it out. Accept Play App Signing
-   when asked. Keep the build number below 1000 so CI's codes stay higher.
-
-7. From then on, push to `main`.
-
-### Privacy policy
-
-[docs/privacy-policy.html](docs/privacy-policy.html), served by GitHub Pages (repo → Settings →
-Pages → deploy from `main`, folder `/docs`) at
-`https://nick-sullivan.github.io/mtg-eink/privacy-policy.html`. Fill in the contact email first.
-
-### Troubleshooting
-
-- **`Package not found`**: the app doesn't exist yet, the first bundle hasn't been uploaded, or
-  the service account hasn't been given access to this app (step 3).
-- **`Only releases with status draft may be created on draft app`**: the first release (step 6)
-  hasn't been rolled out yet.
-- **`Version code has already been used`**: raise `VERSION_CODE_BASE` in the workflow.
+This is unofficial Fan Content permitted under the Wizards of the Coast Fan Content Policy. It is
+not approved or endorsed by Wizards. Magic: The Gathering is ™ & © Wizards of the Coast.

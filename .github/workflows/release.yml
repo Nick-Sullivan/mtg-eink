@@ -62,17 +62,18 @@ jobs:
 
       - name: Restore upload keystore
         env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          KEYSTORE_BASE64: ${{ secrets.GOOGLE_PLAY_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.GOOGLE_PLAY_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.GOOGLE_PLAY_KEYSTORE_ALIAS }}
+          # The key shares the keystore's password — keytool's default, and required for PKCS12.
+          KEY_PASSWORD: ${{ secrets.GOOGLE_PLAY_KEYSTORE_PASSWORD }}
+          PLAY_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_KEY }}
         run: |
           # A missing or misnamed secret expands to an empty string, which otherwise surfaces much
           # later as an opaque Gradle signing error. Name the culprit up front instead.
           missing=0
           for name in KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD PLAY_JSON; do
-            if [ -z "${!name}" ]; then echo "::error::Secret for $name is empty or not set"; missing=1; fi
+            if [ -z "${!name}" ]; then echo "::error::The secret behind $name is empty or not set (see env above)"; missing=1; fi
           done
           [ "$missing" = 0 ] || exit 1
 
@@ -114,7 +115,7 @@ jobs:
       - name: Upload to Google Play
         uses: r0adkll/upload-google-play@v1
         with:
-          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_KEY }}
           packageName: com.nicksullivan.mtg_eink
           releaseFiles: build/app/outputs/bundle/release/app-release.aab
           tracks: ${{ github.event_name == 'workflow_dispatch' && inputs.track || 'internal' }}
