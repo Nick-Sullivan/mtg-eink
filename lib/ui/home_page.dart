@@ -419,14 +419,17 @@ class _HomePageState extends State<HomePage>
                 child: child,
               ),
             ),
+            // Keyed on *whether* the overlay is up, never on which state it's in. Keying on the
+            // state made the whole thing — scrim included — cross-fade when the panel arrived,
+            // which flashed. The backdrop now stays put and only the card's contents change.
             child: (_armed || _writing)
                 ? _WriteOverlay(
-                    key: ValueKey(_writing),
+                    key: const ValueKey('write-overlay'),
                     writing: _writing,
                     percent: _percent,
                     onCancel: _disarm,
                   )
-                : const SizedBox.shrink(),
+                : const SizedBox.shrink(key: ValueKey('no-overlay')),
           ),
         ],
       ),
@@ -765,7 +768,18 @@ class _WriteOverlay extends StatelessWidget {
                   horizontal: 28,
                   vertical: 32,
                 ),
-                child: writing ? _writingBody(context) : _waitingBody(context),
+                // The card changes size between states, so animate the box as well as the
+                // contents — otherwise it snaps the instant the panel makes contact.
+                child: AnimatedSize(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOut,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: writing
+                        ? _writingBody(context)
+                        : _waitingBody(context),
+                  ),
+                ),
               ),
             ),
           ),
@@ -776,6 +790,7 @@ class _WriteOverlay extends StatelessWidget {
 
   Widget _waitingBody(BuildContext context) {
     return Column(
+      key: const ValueKey('waiting'),
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(Icons.nfc, size: 64, color: Colors.amber.shade800),
@@ -799,6 +814,7 @@ class _WriteOverlay extends StatelessWidget {
 
   Widget _writingBody(BuildContext context) {
     return Column(
+      key: const ValueKey('writing'),
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
