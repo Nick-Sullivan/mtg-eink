@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 /// and on this hardware they are not optional — at the platform default the session dies within
 /// seconds. This class is the whole of that dependency: everything above it is pure Dart.
 class ApduChannel {
-  static const _channel = MethodChannel('nfc_eink/epaper');
+  static const _channel = MethodChannel('mtg_eink/epaper');
 
   Future<void> open() => _invoke<bool>('openSession');
 

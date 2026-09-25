@@ -81,14 +81,24 @@ void paintContent(Canvas canvas, PanelDevice device, PanelContent content) {
 }
 
 /// Renders [content] to the device's frame and packs it.
-Future<Uint8List> renderFrame(PanelDevice device, PanelContent content) async {
+Future<Uint8List> renderFrame(PanelDevice device, PanelContent content) =>
+    renderPainted(device, (canvas) => paintContent(canvas, device, content));
+
+/// Records whatever [paint] draws in panel coordinates, then packs it to the device's frame.
+///
+/// Packed as flat nearest-colour: every caller draws flat art, and dithering it would only add
+/// speckle.
+Future<Uint8List> renderPainted(
+  PanelDevice device,
+  void Function(Canvas canvas) paint,
+) async {
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(
     recorder,
     Rect.fromLTWH(0, 0, device.size.width, device.size.height),
   );
 
-  paintContent(canvas, device, content);
+  paint(canvas);
 
   final image = await recorder.endRecording().toImage(
     device.pixelsPerRow,
@@ -113,24 +123,43 @@ class PanelPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return PaintedPreview(
+      device: device,
+      paint: (canvas) => paintContent(canvas, device, content),
+    );
+  }
+}
+
+/// Shows whatever [paint] draws in panel coordinates, scaled to fit, at the panel's aspect ratio.
+///
+/// Give it the same paint function the frame is rendered from, so the preview can't drift from
+/// what gets written.
+class PaintedPreview extends StatelessWidget {
+  const PaintedPreview({required this.device, required this.paint, super.key});
+
+  final PanelDevice device;
+  final void Function(Canvas canvas) paint;
+
+  @override
+  Widget build(BuildContext context) {
     return AspectRatio(
       aspectRatio: device.size.width / device.size.height,
-      child: CustomPaint(painter: _PreviewPainter(device, content)),
+      child: CustomPaint(painter: _PreviewPainter(device, paint)),
     );
   }
 }
 
 class _PreviewPainter extends CustomPainter {
-  const _PreviewPainter(this.device, this.content);
+  const _PreviewPainter(this.device, this.paintPanel);
 
   final PanelDevice device;
-  final PanelContent content;
+  final void Function(Canvas canvas) paintPanel;
 
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
     canvas.scale(size.width / device.size.width);
-    paintContent(canvas, device, content);
+    paintPanel(canvas);
     canvas.restore();
   }
 

@@ -1,7 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nfc_eink/models/panel_device.dart';
+import 'package:mtg_eink/models/panel_device.dart';
 
 /// A device's derived geometry.
 ///

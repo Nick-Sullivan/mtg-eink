@@ -1,4 +1,4 @@
-# nfc_eink
+# mtg-eink
 
 A new Flutter project.
 

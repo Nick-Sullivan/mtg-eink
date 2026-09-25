@@ -1,4 +1,4 @@
-# nfc-eink
+# mtg-eink
 
 Flutter/Android app to push text and simple shapes to a **Waveshare 2.9" passive NFC-powered
 e-Paper (G)** — 296x128, **four colours: black, white, red, yellow** — from a Pixel phone.

@@ -2,11 +2,12 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nfc_eink/models/panel_device.dart';
-import 'package:nfc_eink/models/saved_design.dart';
-import 'package:nfc_eink/render/quantiser.dart';
+import 'package:mtg_eink/models/panel_device.dart';
+import 'package:mtg_eink/models/saved_design.dart';
+import 'package:mtg_eink/models/token_content.dart';
+import 'package:mtg_eink/render/quantiser.dart';
 
-import 'package:nfc_eink/services/design_store.dart';
+import 'package:mtg_eink/services/design_store.dart';
 
 const device = PanelDevice.waveshare29G;
 
@@ -27,7 +28,7 @@ void main() {
   late DesignStore store;
 
   setUp(() {
-    root = Directory.systemTemp.createTempSync('nfc_eink_test');
+    root = Directory.systemTemp.createTempSync('mtg_eink_test');
     store = DesignStore(root: root);
   });
 
@@ -156,5 +157,61 @@ void main() {
     ).writeAsStringSync('this is not json');
 
     expect(await store.load(), isEmpty);
+  });
+
+  group('tokens', () {
+    const token = TokenContent(
+      name: 'Saproling',
+      type: 'Token Creature — Saproling',
+      power: '*',
+      toughness: '1+*',
+    );
+
+    test('a saved token comes back as a token with its fields', () async {
+      await store.saveToken(name: 'Sap', frame: frameOf(3), token: token);
+      final design = (await store.load()).single;
+
+      expect(design.kind, DesignKind.token);
+      expect(design.token, token);
+      expect(design.settings, isNull);
+      expect(design.frame.every((b) => b == 3), isTrue);
+    });
+
+    test('tokens and images share one library, newest first', () async {
+      await save('Photo');
+      await store.saveToken(name: 'Sap', frame: frameOf(3), token: token);
+
+      final designs = await store.load();
+      expect(designs.map((d) => d.name), ['Sap', 'Photo']);
+      expect(designs.map((d) => d.kind), [DesignKind.token, DesignKind.image]);
+    });
+
+    test('a token survives a rename', () async {
+      final saved = await store.saveToken(
+        name: 'Sap',
+        frame: frameOf(3),
+        token: token,
+      );
+      await store.rename(saved.id, 'Fungus');
+
+      final design = (await store.load()).single;
+      expect(design.name, 'Fungus');
+      expect(design.token, token);
+    });
+
+    test('entries saved before kinds existed load as images', () async {
+      // An index entry exactly as the image-only version wrote it: no 'kind', no 'token'.
+      final saved = await save('Old');
+      final index = File('${root.path}/designs/index.json');
+      index.writeAsStringSync(
+        index.readAsStringSync().replaceAll('"kind":"image",', ''),
+      );
+      expect(index.readAsStringSync(), isNot(contains('kind')));
+
+      final design = (await store.load()).single;
+      expect(design.id, saved.id);
+      expect(design.kind, DesignKind.image);
+      expect(design.isEditable, isTrue);
+    });
   });
 }

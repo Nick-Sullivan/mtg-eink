@@ -1,4 +1,4 @@
-package com.nickd.nfc_eink
+package com.nickd.mtg_eink
 
 import android.app.Activity
 import android.nfc.NfcAdapter
@@ -32,11 +32,11 @@ import kotlin.concurrent.thread
 class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
 
     private companion object {
-        const val EVENT_CHANNEL = "nfc_eink/tag_events"
-        const val METHOD_CHANNEL = "nfc_eink/epaper"
+        const val EVENT_CHANNEL = "mtg_eink/tag_events"
+        const val METHOD_CHANNEL = "mtg_eink/epaper"
 
-        /** `adb logcat -s nfceink` gives a full APDU trace. */
-        const val LOG_TAG = "nfceink"
+        /** `adb logcat -s mtgeink` gives a full APDU trace. */
+        const val LOG_TAG = "mtgeink"
 
         /**
          * The single biggest reliability lever. The platform default (~125ms) shreds a long write.
@@ -170,7 +170,7 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
     }
 
     /**
-     * Every exchange is logged to `adb logcat -s nfceink`.
+     * Every exchange is logged to `adb logcat -s mtgeink`.
      *
      * This is the project's main debugging instrument. The panel's replies are the only ground
      * truth we have about a protocol recovered by decompilation, and reading them off the device

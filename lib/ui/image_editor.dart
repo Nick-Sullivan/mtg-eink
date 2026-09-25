@@ -66,8 +66,8 @@ class ImageEditor extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: Colors.black54),
           ),
           const SizedBox(height: 12),
-          // Saving is image-only: the library exists to keep pictures you've framed, and text is
-          // quick enough to retype that storing it would be clutter.
+          // Images and tokens save; text doesn't — it's quick enough to retype that storing it
+          // would be clutter.
           OutlinedButton.icon(
             onPressed: busy ? null : onSave,
             icon: const Icon(Icons.bookmark_add_outlined),

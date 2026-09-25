@@ -53,7 +53,11 @@ class LibraryView extends StatelessWidget {
             child: FrameThumbnail(device: device, frame: design.frame),
           ),
           title: Text(design.name),
-          subtitle: Text(_describe(design.createdAt)),
+          subtitle: Text(
+            design.kind == DesignKind.token
+                ? 'MTG token · ${_describe(design.createdAt)}'
+                : _describe(design.createdAt),
+          ),
           trailing: PopupMenuButton<String>(
             onSelected: (action) => switch (action) {
               'rename' => onRename(design),

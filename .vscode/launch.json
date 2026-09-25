@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // NFC only works on real hardware, so every config targets the phone. "Pixel" matches the
+      // device name, so it keeps working if the serial changes.
+      "name": "mtg-eink (phone)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "Pixel"
+    },
+    {
+      // Installs a release build that stays on the phone and runs untethered.
+      "name": "mtg-eink (phone, release)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "Pixel",
+      "flutterMode": "release"
+    },
+    {
+      // The renderer and packing can be exercised without the phone; NFC cannot.
+      "name": "mtg-eink (Windows, no NFC)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "deviceId": "windows"
+    }
+  ]
+}

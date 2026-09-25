@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/saved_design.dart';
+import '../models/token_content.dart';
 
 /// The saved design library, on disk.
 ///
@@ -12,9 +13,9 @@ import '../models/saved_design.dart';
 ///
 /// ```
 /// designs/
-///   index.json        metadata and framing settings, newest first
+///   index.json        metadata: kind, framing settings or token fields, newest first
 ///   <id>.frame        9,472 rendered bytes — a cache, for thumbnails and re-sends
-///   <id>.src          the original picture, as picked
+///   <id>.src          the original picture, as picked (images only)
 /// ```
 ///
 /// Binaries are kept as raw files rather than base64 inside the index so the index stays small and
@@ -73,6 +74,12 @@ class DesignStore {
         }
 
         final settings = entry['settings'] as Map<String, Object?>?;
+        // Entries from before tokens existed have no kind, and are all images.
+        final token = entry['kind'] == DesignKind.token.name
+            ? TokenContent.fromJson(
+                entry['token'] as Map<String, Object?>? ?? const {},
+              )
+            : null;
         designs.add(
           SavedDesign(
             id: id,
@@ -85,6 +92,7 @@ class DesignStore {
                 ? null
                 : ImageSettings.fromJson(settings),
             hasSource: _sourceFile(directory, id).existsSync(),
+            token: token,
           ),
         );
       }
@@ -101,18 +109,46 @@ class DesignStore {
     required ImageSettings settings,
   }) async {
     final directory = await _ensureDirectory();
-
     final design = SavedDesign(
-      id: DateTime.now().microsecondsSinceEpoch.toRadixString(36),
+      id: _newId(),
       name: name,
       createdAt: DateTime.now(),
       frame: frame,
       settings: settings,
       hasSource: true,
     );
-
     await _sourceFile(directory, design.id).writeAsBytes(source, flush: true);
-    await _frameFile(directory, design.id).writeAsBytes(frame, flush: true);
+    return _add(directory, design);
+  }
+
+  /// Saves an MTG token. Its fields go in the index; there's no source picture.
+  Future<SavedDesign> saveToken({
+    required String name,
+    required Uint8List frame,
+    required TokenContent token,
+  }) async {
+    final directory = await _ensureDirectory();
+    return _add(
+      directory,
+      SavedDesign(
+        id: _newId(),
+        name: name,
+        createdAt: DateTime.now(),
+        frame: frame,
+        token: token,
+      ),
+    );
+  }
+
+  static String _newId() =>
+      DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+
+  /// Writes [design]'s frame and puts it at the head of the index.
+  Future<SavedDesign> _add(Directory directory, SavedDesign design) async {
+    await _frameFile(
+      directory,
+      design.id,
+    ).writeAsBytes(design.frame, flush: true);
     final all = await load();
     await _writeIndex(directory, [design, ...all]);
     return design;

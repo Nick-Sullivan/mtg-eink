@@ -64,7 +64,7 @@ lib/
   nfc/gseries_protocol.dart       the command set — all panel knowledge lives here
   render/                         CustomPainter -> ui.Image -> exact four-colour pixels
   ui/home_page.dart
-android/app/src/main/kotlin/com/nickd/nfc_eink/MainActivity.kt
+android/app/src/main/kotlin/com/nickd/mtg_eink/MainActivity.kt
 ```
 
 **Kotlin owns the radio and nothing else.** Reader mode and the presence-check delay cannot be set
@@ -206,8 +206,16 @@ text-mode saves — the frame stays the source of truth for sending.
 The actual destination. A token needs: creature name, type line, power/toughness, colour identity,
 and ideally art.
 
-- [ ] A token template as a first-class layout, not free text: name, type line, P/T box, art area.
-- [ ] Make P/T legible at a glance — that is what the panel is *for* during a game.
+- [x] A token template as a first-class layout, not free text: name, type line, P/T box, art area.
+      The **MTG** tab (`lib/render/token_painter.dart`, `lib/ui/token_editor.dart`): black frame,
+      white title/type bars, hatched art box, P/T box bottom right. Text shrinks to fit, then
+      ellipsises. Checked on the phone preview; **not yet written to the panel**.
+- [ ] Make P/T legible at a glance — that is what the panel is *for* during a game. The P/T box is
+      18px bold today; judge it on the panel from across a table.
+- [x] Optional ability text: a wrapped text box between the type line and P/T that only appears
+      when there is text, taking its height from the art. Shrinks 11px → 7px, then ellipsises.
+- [x] Save tokens to the library. Same `designs/` store; the index entry carries `kind: token` and
+      the fields, so opening one lands in the MTG tab, editable. Entries without a kind are images.
 - [ ] Batch mode: hold a queue of tokens and write them one per tap, so a set of panels can be
       filled in one sitting.
 - [ ] Optional: pull card data from an API such as Scryfall by name. Needs network permission and a

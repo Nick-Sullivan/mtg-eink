@@ -7,24 +7,27 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/panel_device.dart';
 import '../models/saved_design.dart';
+import '../models/token_content.dart';
 import '../nfc/apdu.dart';
 import '../nfc/gseries_protocol.dart';
 import '../nfc/tag_events.dart';
 import '../render/canvas_painter.dart';
 import '../render/image_content.dart';
 import '../render/quantiser.dart';
+import '../render/token_painter.dart';
 import '../services/design_store.dart';
 import 'crop_view.dart';
 import 'image_editor.dart';
 import 'library_view.dart';
 import 'settings_view.dart';
 import 'text_editor.dart';
+import 'token_editor.dart';
 import 'widgets/info_banner.dart';
 import 'widgets/name_dialog.dart';
 import 'widgets/write_button.dart';
 
 /// The app's top-level tabs.
-enum AppTab { text, image, saved, settings }
+enum AppTab { text, image, token, saved, settings }
 
 /// Compose something and push it to the panel.
 ///
@@ -52,6 +55,7 @@ class _HomePageState extends State<HomePage>
   PanelDevice _device = PanelDevice.waveshare29G;
   late PanelContent _content = PanelContent.forDevice(_device, text: 'HELLO');
   ImageContent? _image;
+  TokenContent _token = const TokenContent();
   List<SavedDesign> _designs = const [];
 
   TagDetected? _tag;
@@ -79,13 +83,14 @@ class _HomePageState extends State<HomePage>
   bool get _panelPresent => _tag != null && _lost == null;
 
   /// Whether the active tab composes anything to send.
-  bool get _composes => _tab == AppTab.text || _tab == AppTab.image;
+  bool get _composes =>
+      _tab == AppTab.text || _tab == AppTab.image || _tab == AppTab.token;
 
   /// Whether there's something ready to send right now.
   bool get _hasSomethingToWrite => switch (_tab) {
-    AppTab.text => true,
+    AppTab.text || AppTab.token => true,
     AppTab.image => _image != null,
-    // The library is a browser — tapping a design opens it in Image, and it's sent from there.
+    // The library is a browser — tapping a design opens it in its own tab, and it's sent from there.
     AppTab.saved || AppTab.settings => false,
   };
 
@@ -152,6 +157,8 @@ class _HomePageState extends State<HomePage>
       case AppTab.image:
         final image = _image;
         return image == null ? null : renderImageFrame(image);
+      case AppTab.token:
+        return renderTokenFrame(_device, _token);
       case AppTab.saved:
       case AppTab.settings:
         return null;
@@ -215,11 +222,21 @@ class _HomePageState extends State<HomePage>
     setState(() => _designs = designs);
   }
 
-  /// Opens a saved design in the Image tab, restoring the original picture and its framing.
+  /// Opens a saved design in the tab it was made in.
   ///
-  /// The stored frame is only a cache. Reopening goes back to the source, so the crop, zoom and
-  /// dither style are all still adjustable and nothing is quantised twice.
+  /// The stored frame is only a cache. An image reopens from its source, so the crop, zoom and
+  /// dither style are all still adjustable and nothing is quantised twice; a token reopens from its
+  /// fields, so it's editable rather than a flat picture.
   Future<void> _openDesign(SavedDesign design) async {
+    if (design.token case final token?) {
+      setState(() {
+        _token = token;
+        _tab = AppTab.token;
+      });
+      _tabs.animateTo(AppTab.token.index);
+      return;
+    }
+
     final settings = design.settings;
     final source = await _store.readSource(design.id);
 
@@ -260,9 +277,11 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  /// Saves whatever the active tab is composing — an image or a token.
   Future<void> _saveCurrent() async {
     final image = _image;
-    if (image == null) return;
+    final token = _token;
+    if (_tab == AppTab.image && image == null) return;
 
     final frame = await _currentFrame();
     if (frame == null || !mounted) return;
@@ -270,23 +289,29 @@ class _HomePageState extends State<HomePage>
     final name = await askForName(
       context,
       title: 'Save design',
-      initial: 'Image',
+      initial: _tab == AppTab.token
+          ? (token.name.trim().isEmpty ? 'Token' : token.name)
+          : 'Image',
     );
     if (name == null || !mounted) return;
 
     // Grab the messenger before the awaits, so the confirmation doesn't depend on this widget's
     // context still being valid afterwards.
     final messenger = ScaffoldMessenger.of(context);
-    await _store.save(
-      name: name,
-      frame: frame,
-      source: image.bytes,
-      settings: ImageSettings(
-        offset: image.offset,
-        scale: image.scale,
-        style: image.style,
-      ),
-    );
+    if (_tab == AppTab.token) {
+      await _store.saveToken(name: name, frame: frame, token: token);
+    } else {
+      await _store.save(
+        name: name,
+        frame: frame,
+        source: image!.bytes,
+        settings: ImageSettings(
+          offset: image.offset,
+          scale: image.scale,
+          style: image.style,
+        ),
+      );
+    }
     await _reloadLibrary();
     messenger.showSnackBar(SnackBar(content: Text('Saved "$name"')));
   }
@@ -448,9 +473,13 @@ class _HomePageState extends State<HomePage>
             child: TabBar(
               controller: _tabs,
               indicatorSize: TabBarIndicatorSize.tab,
+              // Five tabs across a phone leave ~79dp each; the default 16dp side padding clipped
+              // "Settings".
+              labelPadding: const EdgeInsets.symmetric(horizontal: 4),
               tabs: const [
                 Tab(icon: Icon(Icons.title), text: 'Text'),
                 Tab(icon: Icon(Icons.image_outlined), text: 'Image'),
+                Tab(icon: Icon(Icons.style_outlined), text: 'MTG'),
                 Tab(icon: Icon(Icons.bookmark_outline), text: 'Saved'),
                 Tab(icon: Icon(Icons.tune), text: 'Settings'),
               ],
@@ -480,7 +509,7 @@ class _HomePageState extends State<HomePage>
                     onDelete: _deleteDesign,
                   ),
                 ),
-                AppTab.text || AppTab.image => _composer(),
+                AppTab.text || AppTab.image || AppTab.token => _composer(),
               },
 
               // Nothing to write from the Saved or Settings tabs — tapping a saved design opens it
@@ -549,6 +578,10 @@ class _HomePageState extends State<HomePage>
                     ),
                   ),
                 ),
+                (AppTab.token, _) => PaintedPreview(
+                  device: _device,
+                  paint: (canvas) => paintToken(canvas, _device, _token),
+                ),
                 _ => PanelPreview(device: _device, content: _content),
               },
             ),
@@ -556,22 +589,28 @@ class _HomePageState extends State<HomePage>
         ),
         const SizedBox(height: 20),
 
-        if (_tab == AppTab.image)
-          ImageEditor(
+        switch (_tab) {
+          AppTab.image => ImageEditor(
             content: image,
             picking: _picking,
             busy: _writing,
             onPick: _pickImage,
             onChanged: (c) => setState(() => _image = c),
             onSave: _saveCurrent,
-          )
-        else
-          TextEditor(
+          ),
+          AppTab.token => TokenEditor(
+            content: _token,
+            onChanged: (t) => setState(() => _token = t),
+            busy: _writing,
+            onSave: _saveCurrent,
+          ),
+          _ => TextEditor(
             device: _device,
             controller: _textController,
             content: _content,
             onChanged: (c) => setState(() => _content = c),
           ),
+        },
       ],
     );
   }

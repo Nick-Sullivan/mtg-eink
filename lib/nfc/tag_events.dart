@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 
-/// Mirrors the payloads emitted by `MainActivity.kt` over `nfc_eink/tag_events`.
+/// Mirrors the payloads emitted by `MainActivity.kt` over `mtg_eink/tag_events`.
 sealed class TagEvent {
   const TagEvent();
 
@@ -82,7 +82,7 @@ class TagLost extends TagEvent {
   final int heldMs;
 }
 
-const _channel = EventChannel('nfc_eink/tag_events');
+const _channel = EventChannel('mtg_eink/tag_events');
 
 Stream<TagEvent> tagEvents() => _channel.receiveBroadcastStream().map(
   (event) => TagEvent.fromMap(event as Map<Object?, Object?>),

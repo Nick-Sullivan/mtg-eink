@@ -2,7 +2,7 @@
     <uses-permission android:name="android.permission.NFC"/>
     <uses-feature android:name="android.hardware.nfc" android:required="true"/>
     <application
-        android:label="nfc_eink"
+        android:label="mtg-eink"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
