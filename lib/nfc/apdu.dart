@@ -59,5 +59,6 @@ extension ApduResponse on Uint8List {
 String toHex(List<int> bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join();
 
-String toSpacedHex(List<int> bytes) =>
-    bytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join(' ');
+String toSpacedHex(List<int> bytes) => bytes
+    .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+    .join(' ');

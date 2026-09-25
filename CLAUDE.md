@@ -51,10 +51,18 @@ sequence works anyway.
 
 ## Conventions
 
-- Target exactly one display model: 2.9" (G), 296x128, four colours, 2 bits per pixel, 9,472 bytes.
-- **All panel knowledge lives in `lib/nfc/gseries_protocol.dart`.** Kotlin owns the radio and
+- **Panel specifics live in `PanelDevice`** (`lib/models/panel_device.dart`) — geometry, palette,
+  block size, refresh timing. Nothing else hardcodes a dimension or a colour. Everything downstream
+  takes a `PanelDevice` parameter, so adding a second panel is an entry in `PanelDevice.supported`
+  rather than a hunt through the renderer. Only one is supported today: the 2.9" (G).
+- **Protocol knowledge lives in `lib/nfc/gseries_protocol.dart`.** Kotlin owns the radio and
   nothing else — it is a dumb `transceive` pipe, because reader mode and the presence-check delay
   can't be set from Dart and `nfc_manager` insists on owning reader mode itself.
 - Commit at each milestone boundary so sessions have clean resume points.
-- `flutter analyze` clean before each commit.
+- `flutter analyze` clean and `flutter test` green before each commit. The suite is pure Dart and
+  runs in about a second — there is no excuse for skipping it.
+- **The tests exist to protect findings that cost real hardware time.** `quantiser_test.dart` pins
+  the chroma weighting (without it every grey sky comes out pink) and `frame_packing_test.dart`
+  pins the 2-bits-per-pixel bit layout. Both were established by writing frames to the panel and
+  photographing the result; neither fails loudly if broken, they just look wrong.
 - **Do not make commits.** Nick makes them. Stage nothing and leave the working tree for review.

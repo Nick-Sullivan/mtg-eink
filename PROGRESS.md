@@ -5,11 +5,22 @@ The milestone checklists live in [`docs/PLAN.md`](docs/PLAN.md); tick them there
 
 ## Status
 
-**Current milestone: OUR APP WRITES TO THE PANEL.** 2026-09-25. Full sequence confirmed on
-hardware — select, unlock, device info, 38 data blocks all `9000`, refresh, poll to completion —
-with no vendor code involved. Protocol and packing are pure Dart; Kotlin only carries bytes.
+**The app works.** 2026-09-25. Compose text in four colours on the phone, hold it to the panel,
+and the image appears and stays there. No vendor code in the path: protocol and pixel packing are
+pure Dart, Kotlin only owns reader mode and carries bytes.
 
-**Next:** confirm whether the panel is really monochrome (see below), then build the real renderer.
+**Also built:** M6 image import with four-colour dithering, and M7 the saved-design library.
+
+**Next session starts here:** **M8, MTG tokens** — the actual destination. M5 (shapes, retry polish)
+is still open but read M8 first: the token layout may decide what shapes are worth building at all.
+
+Two things to be sceptical about before building on them:
+
+- **The ink colours are guesses.** `EPaperDisplay.yellow`/`.red` were eyeballed from a photo, and
+  the whole quantiser is calibrated against them — the 9.0 chroma weight is derived from red's
+  lightness specifically. Photograph a colour probe and sample the real values.
+- **The quantiser has only been judged by eye on a handful of images.** Grey skies going pink is the
+  failure mode to watch for; if it happens, raise `_chromaWeight`.
 
 ### The panel's own device info
 

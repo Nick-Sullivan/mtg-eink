@@ -15,7 +15,9 @@ session. A full refresh takes **~16 seconds**.
 **Target: 296x128, four colours — black, white, red, yellow.** 2 bits per pixel, 9,472 bytes.
 
 v1 scope: **text and simple shapes** (no photo import, no dithering). Minimal rigour: git + lints,
-no CI, no test suite.
+no CI. **There is now a fast unit-test suite** (`flutter test`, ~1 s, pure Dart) covering the frame
+bit layout, the quantiser's colour invariants and the design store — the parts where a regression
+is silent rather than loud.
 
 > ### This plan was rewritten on 2026-09-25, and why matters
 >
@@ -131,7 +133,7 @@ no compression. Full decode in `PROGRESS.md`.
 - [ ] Multi-line text, font size, colour choice from the four-colour palette, live preview.
 - [ ] Small shape palette: filled/outlined rectangle, circle, line, border toggle.
 
-### M5 — Robustness
+### M5 — Shapes and robustness
 
 - [ ] The first `F0 D4 05 80 00` answers `6986` **every time** on this panel and the `0x85` retry
       then works. Worth understanding rather than just tolerating.
@@ -141,6 +143,79 @@ no compression. Full decode in `PROGRESS.md`.
 - [ ] One-tap retry without restarting. Retries are normal here, not exceptional.
 - [ ] Keep the screen awake during a write.
 - [ ] Handle the `6985` PIN path, or at least report it clearly.
+
+---
+
+# Where this is going
+
+Nick's intentions for later sessions, recorded so a cold start knows the destination. Roughly in
+order, but not a commitment to that order.
+
+### M6 — Import an image and approximate it in four colours ✅ **built, not yet judged on hardware**
+
+- [x] Pick an image from the gallery; pan and pinch to frame it in 128 x 296.
+- [x] Quantise in Oklab with chroma-weighted matching and a hue gate (`lib/render/quantiser.dart`).
+- [x] Atkinson error diffusion, serpentine, with auto-levels for photos.
+- [x] Preview shows the **quantised** result, not the source.
+- [x] Photo / Graphic toggle — flat nearest-colour is the right answer for logos and line art.
+- [ ] **Judge it on real photographs and tune.** Nothing below has been checked against the panel.
+
+> **The trap, and why the code looks the way it does.** The problem isn't the missing green and
+> blue — it's **red**. Red sits at Oklab lightness 0.53, almost exactly neutral mid-grey, so *any*
+> plain distance metric picks red for a grey pixel and every overcast sky comes out pink. Moving
+> from RGB to Oklab does not fix it; in Oklab a mid-grey is ~8x closer to red than to the neutrals.
+>
+> The fixes, both load-bearing: chroma error weighted 9x lightness error (break-even is 8.1), and a
+> hue gate that neutralises anything outside the inks' 31°-90° warm wedge, because no mixture of
+> these inks makes a cool hue at any resolution — ungated, that error can never be discharged and
+> diffusion smears it into red.
+
+Ideas not built, in rough order of likely value:
+
+- [ ] A **brightness slider**. With four levels, exposure is a creative decision no heuristic wins.
+- [ ] A **saturation slider** (0 = monochrome, 1 = faithful, 2 = poster). Subsumes "turn red off".
+- [ ] Floyd-Steinberg and Bayer 8x8 as alternative kernels. FS keeps more fine texture; Bayer suits
+      flat graphics and is stable while dragging a slider.
+- [ ] **Calibrate the ink colours against a photograph of the panel.** `EPaperDisplay.yellow` and
+      `.red` are guesses, and the whole quantiser is tuned against them — if the real red is duller,
+      its lightness moves and the 9.0 weight needs re-deriving. Same "photograph it" lesson as the
+      pixel-format work, and it degrades quality silently rather than failing loudly.
+
+### M7 — A library of saved designs on the phone ✅ **built**
+
+- [x] Save from Text or Image mode, list in a third "Saved" tab with real-ink thumbnails, tap to
+      select, Write to send. Rename and delete from a per-row menu.
+- [x] JSON index plus one raw `.frame` file per design, under the app documents directory.
+
+**Changed from the original intent, deliberately.** The plan said to store `PanelContent` so designs
+stay editable. What's stored is the **packed frame** instead:
+
+- a re-send is byte-identical to the original write, whatever the renderer does later
+- 9.5 KB per design — a hundred of them is smaller than one source photo
+- it works identically for text and imported images, with no second code path
+
+The cost is that saved designs can be **re-sent but not edited**. That fits "a shelf of finished
+labels". If editing is wanted later, add the `PanelContent` JSON alongside the frame for
+text-mode saves — the frame stays the source of truth for sending.
+
+- [ ] Reordering, and maybe folders, if the list gets long.
+- [ ] Nothing dedupes identical frames.
+
+### M8 — Magic: the Gathering tokens
+
+The actual destination. A token needs: creature name, type line, power/toughness, colour identity,
+and ideally art.
+
+- [ ] A token template as a first-class layout, not free text: name, type line, P/T box, art area.
+- [ ] Make P/T legible at a glance — that is what the panel is *for* during a game.
+- [ ] Batch mode: hold a queue of tokens and write them one per tap, so a set of panels can be
+      filled in one sitting.
+- [ ] Optional: pull card data from an API such as Scryfall by name. Needs network permission and a
+      cache; worth it only if typing them by hand becomes the bottleneck.
+
+> **Aspect ratio is the design constraint.** A real card is 63 x 88 mm (ratio 0.72); this panel is
+> 128 x 296 (ratio 0.43) — considerably taller and narrower. A token layout cannot just be a
+> shrunken card face. Expect a stacked design: big P/T, name, minimal art.
 
 ## Verification
 

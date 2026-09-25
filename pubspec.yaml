@@ -35,6 +35,13 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # Picking a photo to put on the panel. Uses the system photo picker on modern Android, so it
+  # needs no storage permission and no manifest changes.
+  image_picker: ^1.1.2
+
+  # Somewhere to keep the saved design library.
+  path_provider: ^2.1.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

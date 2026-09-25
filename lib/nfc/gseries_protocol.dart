@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import '../models/epaper_display.dart';
+import '../models/panel_device.dart';
 import 'apdu.dart';
 
 /// The command set for the Waveshare NFC-Powered e-Paper **(G)** series.
@@ -99,31 +99,32 @@ class GSeriesProtocol {
 /// needs this; a silent 20-second pause reads as a hang.
 extension GSeriesWrite on GSeriesProtocol {
   Future<void> writeFrame(
+    PanelDevice device,
     Uint8List packed, {
     void Function(int percent)? onProgress,
   }) async {
-    // The panel is written in fixed 250-byte blocks; the last one is zero-padded.
-    final padded = Uint8List(EPaperDisplay.blockCount * EPaperDisplay.blockSize)
+    // The panel is written in fixed-size blocks; the last one is zero-padded.
+    final padded = Uint8List(device.blockCount * device.blockSize)
       ..setRange(0, packed.length, packed);
 
-    for (var block = 0; block < EPaperDisplay.blockCount; block++) {
-      final start = block * EPaperDisplay.blockSize;
+    for (var block = 0; block < device.blockCount; block++) {
+      final start = block * device.blockSize;
       final apdu = <int>[
         0xF0, 0xD2,
         0x00, // plane — only one on this panel
         block,
-        0xFA, // Lc = 250
-        ...padded.sublist(start, start + EPaperDisplay.blockSize),
+        device.blockSize,
+        ...padded.sublist(start, start + device.blockSize),
       ];
 
       final response = await _channel.transceive(apdu);
       if (!response.isOk) {
         throw NfcFailure('Block $block refused: ${response.sw}');
       }
-      onProgress?.call((block + 1) * _transferShare ~/ EPaperDisplay.blockCount);
+      onProgress?.call((block + 1) * _transferShare ~/ device.blockCount);
     }
 
-    await _refresh(onProgress);
+    await _refresh(device, onProgress);
   }
 
   /// Share of the progress bar given to the block transfer.
@@ -133,10 +134,10 @@ extension GSeriesWrite on GSeriesProtocol {
   /// by how long each phase actually takes.
   static const int _transferShare = 8;
 
-  /// How long a full refresh takes, measured end to end on the 2.9" (G).
-  static const _nominalRefresh = Duration(milliseconds: 21400);
-
-  Future<void> _refresh(void Function(int)? onProgress) async {
+  Future<void> _refresh(
+    PanelDevice device,
+    void Function(int)? onProgress,
+  ) async {
     onProgress?.call(_transferShare);
     final started = await _channel.transceive(GSeriesProtocol.startRefresh);
     final startedHex = toHex(started);
@@ -156,7 +157,9 @@ extension GSeriesWrite on GSeriesProtocol {
       var accepted = false;
       for (var attempt = 0; attempt < 5 && !accepted; attempt++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
-        final retry = await _channel.transceive(GSeriesProtocol.startRefreshBusy);
+        final retry = await _channel.transceive(
+          GSeriesProtocol.startRefreshBusy,
+        );
         final hex = toHex(retry);
         accepted = hex == '009000' || hex == '9000';
       }
@@ -189,7 +192,7 @@ extension GSeriesWrite on GSeriesProtocol {
       }
 
       final elapsed = DateTime.now().difference(startedAt).inMilliseconds;
-      final fraction = elapsed / _nominalRefresh.inMilliseconds;
+      final fraction = elapsed / device.nominalRefresh.inMilliseconds;
       final span = 99 - _transferShare;
       onProgress?.call(
         _transferShare + (fraction.clamp(0.0, 1.0) * span).round(),
@@ -233,7 +236,8 @@ class DeviceInfoRaw {
     return (first[offset] << 8) | first[offset + 1];
   }
 
-  String get dimensionsDebug => '${reportedLong ?? '?'} x ${reportedShort ?? '?'}';
+  String get dimensionsDebug =>
+      '${reportedLong ?? '?'} x ${reportedShort ?? '?'}';
 
   /// Whether the panel is answering sensibly at all.
   ///

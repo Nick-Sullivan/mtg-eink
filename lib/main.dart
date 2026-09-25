@@ -14,6 +14,9 @@ class NfcEinkApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
+        // A grey ground, so the panel preview reads as an object sitting on the page. Against a
+        // white app background a mostly-white frame has no visible edge at all.
+        scaffoldBackgroundColor: const Color(0xFFDDDCD8),
       ),
       home: const HomePage(),
     );
