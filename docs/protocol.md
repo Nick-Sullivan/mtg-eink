@@ -270,7 +270,14 @@ reset high, 50 ms, low, 50 ms, high, 10 ms
 24                   write RAM, then 60 x  74 9A 00 0E FA <250 bytes>  (15,000 = 400x300/8)
 22 <- C7, 20         refresh
 wait 1000 ms with NO traffic, then poll 74 9B every 250 ms until 00
+10 <- 01             deep sleep, mode 1 (keeps RAM) — ours, not the vendor app's; see below
 ```
+
+The vendor app stops after the busy poll, leaving the controller awake until the panel leaves the
+field. Pulled away like that, white areas came up speckled (2026-10-10). Waveshare's wired drivers
+for this controller always end with deep sleep, so the app now does too. **It did not cure the
+speckle** (tested the same day); it stays because it's what wired firmware does and costs nothing.
+The next write's reset pulse wakes it, so nothing else changes.
 
 | phase | measured |
 |---|---|

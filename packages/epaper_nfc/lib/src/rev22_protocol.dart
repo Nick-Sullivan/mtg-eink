@@ -47,13 +47,47 @@ class Rev22Protocol {
   /// `21 48 00` inverts the black-and-white RAM on display, which is why a 1 bit is black. The
   /// `44`/`45` windows are 0..49 bytes across and 0..299 rows down; `4E`/`4F` park the address
   /// counter at the origin. A `null` is a pause the vendor app makes at that point.
-  static const _setup400x300 = <(int, List<int>)?>[
+  ///
+  /// The waveform part depends on [fastWaveform]; see [_setup400x300].
+  static List<(int, List<int>)?> get _setup400x300 => [
     (0x21, [0x48, 0x00]),
     (0x3C, [0x05]),
+    ...fastWaveform ? _fastWaveformSetup : _fullWaveformSetup,
+    ..._windowSetup,
+  ];
+
+  /// The vendor app's fast waveform: tell the controller it's 110 °C (`1A <- 6E`), which selects a
+  /// short waveform, and load it now (`22 <- 91`, `20`). Refreshes with [_fastRefresh].
+  static const _fastWaveformSetup = <(int, List<int>)?>[
     (0x1A, [0x6E]),
     (0x22, [0x91]),
     (0x20, []),
     null,
+  ];
+
+  /// The controller's own waveform: read the internal temperature sensor (`18 <- 80`) and let the
+  /// refresh load the matching waveform itself. Refreshes with [_fullRefresh].
+  static const _fullWaveformSetup = <(int, List<int>)?>[
+    (0x18, [0x80]),
+  ];
+
+  /// Which waveform to refresh with.
+  ///
+  /// **Fast, and it has to be.** Tried full on 2026-10-10, hoping it would cure the speckle white
+  /// areas get when the panel leaves the field within a few seconds of a fast refresh: the phone's
+  /// field couldn't power it at all — busy never rose, twice running. The fast waveform exists
+  /// because it's the one this field can drive. The full path stays for a stronger reader.
+  static const fastWaveform = true;
+
+  /// `22 <- C7`: clock and analog on, display with the already-loaded waveform, then off.
+  static const _fastRefresh = 0xC7;
+
+  /// `22 <- F7`: as [_fastRefresh], but load the temperature and the matching waveform first.
+  static const _fullRefresh = 0xF7;
+
+  static int get _refreshMode => fastWaveform ? _fastRefresh : _fullRefresh;
+
+  static const _windowSetup = <(int, List<int>)?>[
     (0x11, [0x03]),
     (0x44, [0x00, 0x31]),
     (0x45, [0x00, 0x00, 0x2B, 0x01]),
@@ -86,10 +120,50 @@ class Rev22Protocol {
     await _resetAndSetup();
     onProgress?.call(_setupShare);
     await _sendImage(device, packed, onProgress);
-    await _register(0x22, const [0xC7]);
+    await _register(0x22, [_refreshMode]);
     await _register(0x20, const []);
     if (!await _awaitRefresh(device, onProgress, onRefreshStarted)) {
       throw const RefreshNotStarted();
+    }
+    await _sleep();
+    await _settle(onProgress);
+  }
+
+  /// How long the panel must stay in the field after its refresh reports finished.
+  ///
+  /// Busy clearing is not the end. Pulled away ~3 s after it, white areas turned to speckle a second
+  /// later; left on the phone ~10 s first, the white stayed clean (2026-10-10, 4.2"). 6 s still
+  /// speckled. **Zero while the spot-check experiment runs** (see `panel_writer.dart`): that tests
+  /// whether the speckle comes from the spot check's extra refresh, in which case no wait is
+  /// needed at all. The radio is kept quiet throughout, and the write only reports done, and the
+  /// phone only buzzes, after it.
+  static const settleTime = Duration.zero;
+
+  /// Waits out [settleTime], moving the progress bar from [_refreshShare] to 100.
+  Future<void> _settle(void Function(int)? onProgress) async {
+    final slices = settleTime.inMilliseconds ~/ _pollInterval.inMilliseconds;
+    for (var slice = 1; slice <= slices; slice++) {
+      await _delay(_pollInterval);
+      onProgress?.call(_refreshShare + slice * (100 - _refreshShare) ~/ slices);
+    }
+    onProgress?.call(100);
+  }
+
+  /// Puts the controller into deep sleep, mode 1, once the picture is up.
+  ///
+  /// The vendor app stops at the end of the refresh, leaving the controller awake until the panel
+  /// leaves the field and browns out. Pulled away like that, white areas came up speckled
+  /// (2026-10-10). Waveshare's wired drivers for this controller always finish with `10 <- 01`,
+  /// which parks the outputs before power goes. Mode 1 keeps the image RAM, and the next write's
+  /// reset pulse wakes it, so nothing else changes.
+  ///
+  /// Never fails the write: the picture is already up, and a panel pulled away this instant just
+  /// misses the nicety.
+  Future<void> _sleep() async {
+    try {
+      await _register(0x10, const [0x01]);
+    } on NfcFailure {
+      // Gone already; see above.
     }
   }
 
@@ -106,7 +180,7 @@ class Rev22Protocol {
   Future<bool> probe() async {
     await _begin();
     await _resetAndSetup();
-    await _register(0x22, const [0xC7]);
+    await _register(0x22, [_refreshMode]);
     await _register(0x20, const []);
     await _delay(const Duration(milliseconds: 1000));
     if (!await _busy()) return false;
@@ -186,12 +260,15 @@ class Rev22Protocol {
     }
   }
 
-  /// Share of the progress bar given to setup, then to setup plus the block transfer.
+  /// Share of the progress bar given to setup, then setup plus the block transfer, then those plus
+  /// the refresh; the rest is [settleTime].
   ///
-  /// Measured on a 4.2": setup **0.8 s**, 60 blocks **3.2 s**, refresh **1.7 s**. Split by time,
-  /// not by step count, so the bar moves steadily.
+  /// Measured on a 4.2": setup **0.8 s**, 60 blocks **3.2 s**, refresh **1.7 s**. Split roughly by
+  /// time, not by step count, so the bar moves steadily. If [settleTime] comes back, give it a
+  /// share in proportion (with 6 s it was 7 / 35 / 50).
   static const int _setupShare = 14;
   static const int _transferShare = 70;
+  static const int _refreshShare = 99;
 
   /// Waits out the refresh. False if it never started; throws if it started and then went wrong.
   ///
@@ -215,7 +292,8 @@ class Rev22Protocol {
       final fraction = elapsed / device.nominalRefresh.inMilliseconds;
       onProgress?.call(
         _transferShare +
-            (fraction.clamp(0.0, 1.0) * (99 - _transferShare)).round(),
+            (fraction.clamp(0.0, 1.0) * (_refreshShare - _transferShare))
+                .round(),
       );
     }
 
@@ -242,7 +320,7 @@ class Rev22Protocol {
         if (!sawBusy) onStarted?.call();
         sawBusy = true;
       } else if (sawBusy) {
-        onProgress?.call(100);
+        onProgress?.call(_refreshShare);
         return true;
       } else if (elapsed > _busyGrace) {
         return false;

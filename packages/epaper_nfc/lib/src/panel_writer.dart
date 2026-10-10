@@ -22,10 +22,17 @@ Future<void> writeToPanel(
       await protocol.readDeviceInfoChecked();
       await protocol.writeFrame(device, frame, onProgress: onProgress);
     case PanelProtocol.rev22:
-      // Check the spot can power a refresh before spending ~5 s on the upload and refresh.
       final protocol = Rev22Protocol(channel);
-      if (!await protocol.probe()) throw const RefreshNotStarted();
+      // Check the spot can power a refresh before spending ~5 s on the upload and refresh.
+      if (_rev22SpotCheck && !await protocol.probe()) {
+        throw const RefreshNotStarted();
+      }
       onSpotFound?.call();
       await protocol.writeFrame(device, frame, onProgress: onProgress);
   }
 }
+
+/// The spot check is a whole extra refresh before every write. Turned off on 2026-10-10 to see
+/// whether that double refresh caused the speckle white areas get when the panel is pulled away
+/// soon after a write: it didn't, and without it a bad spot only shows after the whole upload. On.
+const _rev22SpotCheck = true;

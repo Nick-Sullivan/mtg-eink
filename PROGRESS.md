@@ -344,6 +344,51 @@ than trusting either reading.
 
 ## Log
 
+- **2026-10-10** — **NFC degraded again with use, no field resets involved; NFC off/on cured it.**
+  `dumpsys nfc` showed reader mode toggling only on pause/resume and no
+  `setDiscoveryTechnology`, so it wasn't the morning's cause. logcat showed the real churn: the
+  panels are dual-interface (4.2": IsoDep + NfcA + MifareClassic, SAK 28), and the idle monitor held
+  **NfcA**, reconnecting it every second. Each NfcA connect makes the controller switch the tag's
+  RF interface ISO-DEP → frame (`switching to tech=1 need to switch rf intf to frame`), i.e.
+  deactivate and re-select it, and each write switched back and forth again. ~40% of those
+  re-selects failed (`NFA_SELECT_RESULT_EVT error: status = 3`, `reSelect: timeout`). Fixed in
+  `EpaperNfcPlugin.kt`: the monitor holds **IsoDep**, writes borrow that same connection, and only
+  the diagnostics console's raw NfcA mode ever switches interface. **Not yet confirmed to cure the
+  degradation** — the failure rate was flat, not climbing, so the link is a strong suspicion, not a
+  proof. Check after a long session: `adb logcat -d | grep -c "reSelect: timeout"` should be ~0.
+  **Follow-up, same day: it did not cure it.** With zero interface switches, Nick still found locks
+  getting harder until NFC was toggled. Refresh outcomes are bimodal — busy 1.57–1.65 s (ran) or
+  dead before the first poll at 1 s (field too weak), nothing between — and came in streaks: 4 of
+  14 placements ran just before the 16:07 toggle, ~12 of 24 after it. `mPowerSavingState` in
+  `dumpsys nfc` is a red herring (`isPowerSavingModeSupported=false`), and nothing in logcat reports
+  field strength. Cause still unknown. **Experiment running:** the idle presence probe no longer
+  re-selects the panel every second; on ISO-DEP it sends a 4-byte `00 00 00 00` that every panel
+  refuses, so the app now does nothing to the radio between writes but that. If locks still
+  degrade, the probe is ruled out. To confirm it's live: no `doReconnect` lines in logcat while a
+  panel sits on the phone.
+- **2026-10-10** — White areas on the 4.2" turn speckled about a second after the panel is pulled
+  away, *after* a refresh that ran to completion (busy ~1.8 s, removal ~3 s later). Deep sleep
+  (`10 <- 01`) after the refresh did not cure it. **Left on the phone ~10 s first, the white stays
+  clean** — the panel needs field for a while after busy clears. A 6 s quiet wait before reporting
+  done still speckled. **The vendor app's 400x300 routine (`r`, branch `i2 == 3`, read from the
+  `--show-bad-code` decompile) is command-for-command ours**: same setup and fast waveform, RAM `24`
+  only, `22 <- C7`, `20`, 1 s quiet, 250 ms polls, then `isoDep.close()` — nothing after. What we do
+  beyond it: the spot check (a *second* fast refresh before every write), deep sleep, and the idle
+  presence probe. **Experiment running:** spot check off (`_rev22SpotCheck` in `panel_writer.dart`)
+  and settle zero, so a write is the vendor's sequence plus deep sleep. Clean white → the double
+  refresh was the cause, and spot-checking needs another method. Still speckles → it's the panel.
+  **Result: still speckled.** So with the vendor's own sequence it happens too. **Next experiment
+  running:** the controller's full waveform instead of the vendor's fast one
+  (`Rev22Protocol.fastWaveform` false: `18 <- 80` internal temperature sensor, no `1A`/`22 91`
+  preload, refresh `22 <- F7`). Suspicion: the short waveform doesn't end by driving pixels back to
+  0 V, leaving charge that only bleeds off safely while powered. **Result: the field can't power
+  the full waveform at all** — busy never rose, twice running. Back to fast, spot check back on.
+  The speckle is unsolved; the only cure seen is keeping the panel in the field ~10 s after busy
+  clears (6 s wasn't enough). Also found: after a refresh that ran out of power the panel can stop
+  answering the presence ping while still sitting there; the app declared it lost but the platform
+  still held it, so nothing re-detected it until it was physically removed. The ping now falls
+  back to a reconnect before declaring loss.
+
 - **2026-10-10** — NFC comms moved into `packages/epaper_nfc`, a local Flutter plugin: panel
   definitions, frame layout, both protocols, tag events and the Kotlin radio (`EpaperNfcPlugin.kt`,
   which now follows the activity's resume/pause through `flutter_plugin_android_lifecycle`).

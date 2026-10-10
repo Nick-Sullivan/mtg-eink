@@ -177,7 +177,7 @@ class WriteOverlay extends StatelessWidget {
         if (!checking) ...[
           const SizedBox(height: 4),
           Text(
-            'Hold still — about ${holdFor.inSeconds} seconds.',
+            'Hold still for about ${holdFor.inSeconds} seconds.',
             textAlign: TextAlign.center,
             style: const TextStyle(fontStyle: FontStyle.italic),
           ),

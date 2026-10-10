@@ -149,7 +149,9 @@ class PanelDevice {
     backgroundCode: 0,
     foregroundCode: 1,
     blockSize: 250,
+    // Measured with the fast waveform, which is the one the phone's field can power.
     nominalRefresh: Duration(milliseconds: 1700),
+    // Setup, transfer and refresh; plus `Rev22Protocol.settleTime` if that's ever nonzero.
     typicalWrite: Duration(seconds: 6),
   );
 

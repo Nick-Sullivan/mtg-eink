@@ -5,6 +5,7 @@ import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
 import android.nfc.tech.NfcA
+import android.nfc.tech.TagTechnology
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -61,13 +62,23 @@ class EpaperNfcPlugin : FlutterPlugin, ActivityAware, NfcAdapter.ReaderCallback 
         /** What the vendor app uses for ISO-DEP. A refresh poll can legitimately block for ages. */
         const val ISO_DEP_TIMEOUT_MS = 50_000
 
-        /** Only used by the idle monitor's NfcA connection, not by the protocol. */
+        /** For a raw NfcA session from the diagnostics console. */
         const val NFCA_TIMEOUT_MS = 1200
 
         const val POLL_INTERVAL_MS = 250L
 
         /** How often the idle monitor actually proves the panel is still there. See [probe]. */
         const val PROBE_INTERVAL_MS = 1000L
+
+        /**
+         * CLA 00, INS 00: an instruction ISO 7816-4 leaves undefined, so every panel refuses it —
+         * the 4.2" bridge and the (G) both answer unknown commands with an error status, which is
+         * all [probe] needs. It changes nothing on the panel.
+         */
+        val PRESENCE_PING = byteArrayOf(0x00, 0x00, 0x00, 0x00)
+
+        /** A present panel answers in milliseconds. */
+        const val PING_TIMEOUT_MS = 1000
     }
 
     private var methodChannel: MethodChannel? = null
@@ -94,13 +105,26 @@ class EpaperNfcPlugin : FlutterPlugin, ActivityAware, NfcAdapter.ReaderCallback 
     @Volatile
     private var monitoring = false
 
+    /**
+     * The idle monitor's connection to the current tag: [IsoDep] whenever the tag has it, which both
+     * panels do, and [NfcA] only for a tag that doesn't.
+     *
+     * **Stay on the interface the tag arrives on.** The panels are dual-interface (the 4.2" reports
+     * IsoDep, NfcA and MifareClassic, SAK 28). Connecting as NfcA makes the controller switch the
+     * tag's RF interface from ISO-DEP to frame — deactivate it and re-select it — and switching back
+     * for a write does it again. The monitor used to hold NfcA and reconnect it every second, so a
+     * panel resting on the phone was re-selected across interfaces once a second, and ~40% of those
+     * re-selects failed (`NFA_SELECT_RESULT_EVT error`, `reSelect: timeout` in logcat). That churn is
+     * the prime suspect for the phone's NFC getting steadily worse until NFC was toggled
+     * (2026-10-10). A write now reuses this very connection, so a normal write switches nothing.
+     */
     @Volatile
-    private var currentNfcA: NfcA? = null
+    private var monitor: TagTechnology? = null
 
     @Volatile
     private var currentTag: Tag? = null
 
-    /** The open ISO-DEP channel, if Dart has a session running. */
+    /** The open ISO-DEP channel while Dart has a session running — the monitor's, borrowed. */
     @Volatile
     private var isoDep: IsoDep? = null
 
@@ -114,6 +138,13 @@ class EpaperNfcPlugin : FlutterPlugin, ActivityAware, NfcAdapter.ReaderCallback 
      */
     @Volatile
     private var busy = false
+
+    /**
+     * Held by [probe] and by opening and closing a session. A session borrows the monitor's own
+     * connection, so a probe caught halfway through its close-and-reconnect would otherwise pull it
+     * out from under the write.
+     */
+    private val tagLock = Any()
 
     // ------------------------------------------------------------------------------------ engine
 
@@ -241,26 +272,28 @@ class EpaperNfcPlugin : FlutterPlugin, ActivityAware, NfcAdapter.ReaderCallback 
 
     /**
      * [tech] is `isoDep` (every panel so far) or `nfcA` — raw frames, kept for the diagnostics
-     * console. An NfcA session borrows the idle monitor's own connection rather than opening a
-     * second one; [busy] keeps the monitor's probe off it for the duration.
+     * console. Either way the session borrows the idle monitor's own connection where it can rather
+     * than opening another; [busy] keeps the monitor's probe off it for the duration. See [monitor]
+     * for why an ISO-DEP session must not touch NfcA.
      */
-    private fun openSession(tech: String): Boolean {
+    private fun openSession(tech: String): Boolean = synchronized(tagLock) {
         val tag = currentTag ?: throw IOException("No panel on the phone.")
+        val held = monitor
         if (tech == "nfcA") {
-            val nfcA = currentNfcA ?: throw IOException("This tag has no NfcA interface.")
             busy = true
+            val nfcA = held as? NfcA ?: run {
+                // Diagnostics only: the one place that switches the tag's interface on purpose.
+                runCatching { held?.close() }
+                NfcA.get(tag) ?: throw IOException("This tag has no NfcA interface.")
+            }
             if (!nfcA.isConnected) nfcA.connect()
             nfcA.timeout = NFCA_TIMEOUT_MS
             rawNfcA = nfcA
             return true
         }
-        val dep = IsoDep.get(tag) ?: throw IOException("This tag has no ISO-DEP interface.")
+        val dep = held as? IsoDep ?: throw IOException("This tag has no ISO-DEP interface.")
 
         busy = true
-        // The idle monitor holds an NfcA connection open; a second connect on a tag we already hold
-        // fails. Release it before ISO-DEP takes over.
-        runCatching { currentNfcA?.close() }
-
         dep.timeout = ISO_DEP_TIMEOUT_MS
         if (!dep.isConnected) dep.connect()
         isoDep = dep
@@ -289,16 +322,20 @@ class EpaperNfcPlugin : FlutterPlugin, ActivityAware, NfcAdapter.ReaderCallback 
         return response
     }
 
-    private fun closeSession(): Boolean {
-        runCatching { isoDep?.close() }
+    /**
+     * Hands the connection back to the monitor. An ISO-DEP session *was* the monitor's connection,
+     * so it stays open as it is — closing it would cost a re-select for nothing.
+     */
+    private fun closeSession(): Boolean = synchronized(tagLock) {
         isoDep = null
-        // A raw NfcA session was the monitor's connection all along; it reconnects below.
+        val raw = rawNfcA
         rawNfcA = null
-        // Give the monitor its connection back. If the panel has gone this fails, and the monitor
-        // notices on its next check — which is correct.
-        runCatching {
-            currentNfcA?.connect()
-            currentNfcA?.timeout = NFCA_TIMEOUT_MS
+        val held = monitor
+        if (raw != null && raw !== held) {
+            // A diagnostics NfcA session on an ISO-DEP tag: put the monitor's interface back. If the
+            // panel has gone this fails, and the monitor notices on its next check — correctly.
+            runCatching { raw.close() }
+            runCatching { if (held != null && !held.isConnected) held.connect() }
         }
         busy = false
         return true
@@ -361,14 +398,16 @@ class EpaperNfcPlugin : FlutterPlugin, ActivityAware, NfcAdapter.ReaderCallback 
         )
 
         currentTag = tag
-        if (nfcA == null) {
-            emit(mapOf("type" to "lost", "reason" to "no NfcA on tag", "heldMs" to 0))
+        // IsoDep first: it's the interface the tag is activated on. See [monitor].
+        val held: TagTechnology? = IsoDep.get(tag) ?: nfcA
+        if (held == null) {
+            emit(mapOf("type" to "lost", "reason" to "no IsoDep or NfcA on tag", "heldMs" to 0))
             return
         }
-        currentNfcA = nfcA
+        monitor = held
 
         monitoring = true
-        thread(name = "nfc-presence") { holdAndMeasure(nfcA, session) }
+        thread(name = "nfc-presence") { holdAndMeasure(held, session) }
     }
 
     /**
@@ -380,19 +419,18 @@ class EpaperNfcPlugin : FlutterPlugin, ActivityAware, NfcAdapter.ReaderCallback 
      * surface as an arbitrary unchecked throwable. On a thread of our own, any of those would take
      * the whole app down, so the loop treats every throwable as "the tag went away".
      */
-    private fun holdAndMeasure(nfcA: NfcA, session: Int) {
+    private fun holdAndMeasure(tech: TagTechnology, session: Int) {
         val startedAt = System.currentTimeMillis()
         var reason = "tag moved out of range"
         try {
-            nfcA.timeout = NFCA_TIMEOUT_MS
-            nfcA.connect()
+            tech.connect()
             var lastProbe = System.currentTimeMillis()
-            while (monitoring && sessionId.get() == session && (busy || isStillConnected(nfcA))) {
+            while (monitoring && sessionId.get() == session && (busy || isStillConnected(tech))) {
                 emit(mapOf("type" to "held", "heldMs" to (System.currentTimeMillis() - startedAt)))
                 Thread.sleep(POLL_INTERVAL_MS)
                 // Stand well clear while Dart owns the tag — see [probe].
                 if (!busy && System.currentTimeMillis() - lastProbe >= PROBE_INTERVAL_MS) {
-                    probe(nfcA)
+                    probe(tech)
                     lastProbe = System.currentTimeMillis()
                 }
             }
@@ -406,10 +444,10 @@ class EpaperNfcPlugin : FlutterPlugin, ActivityAware, NfcAdapter.ReaderCallback 
         } catch (e: Throwable) {
             reason = "${e.javaClass.simpleName}: ${e.message ?: "no detail"}"
         } finally {
-            runCatching { nfcA.close() }
+            runCatching { tech.close() }
             // Only the newest session owns the UI, or a stale thread would report a phantom loss.
             if (sessionId.get() == session) {
-                currentNfcA = null
+                monitor = null
                 currentTag = null
                 emit(
                     mapOf(
@@ -425,22 +463,46 @@ class EpaperNfcPlugin : FlutterPlugin, ActivityAware, NfcAdapter.ReaderCallback 
     /**
      * Proves the panel is still in the field, and throws if it isn't.
      *
-     * [NfcA.isConnected] only reports a cached flag — it never touches the tag — so with the
-     * presence check pushed out to a minute, nothing notices a removed panel. A reconnect needs no
-     * protocol knowledge at all: it fails exactly when the panel is gone.
+     * `isConnected` only reports a cached flag — it never touches the tag — so with the presence
+     * check pushed out to a minute, nothing notices a removed panel.
+     *
+     * On ISO-DEP it sends [PRESENCE_PING], a command no panel implements: any answer at all, error
+     * included, means the panel is there, and an exchange that fails means it isn't. It used to
+     * close and reconnect instead, which deactivates and re-selects the panel every second it sits
+     * on the phone. That's an experiment in itself (2026-10-10): locks were getting harder with use
+     * until NFC was toggled, and those re-selects were the last regular thing the app did to the
+     * radio. A tag without ISO-DEP still gets the reconnect.
      *
      * **Idle monitoring only.** Never call this while a session is open.
      */
-    private fun probe(nfcA: NfcA) {
-        nfcA.close()
-        nfcA.connect()
-        nfcA.timeout = NFCA_TIMEOUT_MS
+    private fun probe(tech: TagTechnology) {
+        synchronized(tagLock) {
+            // A session may have opened since the caller looked; it owns the connection now.
+            if (busy) return
+            if (tech is IsoDep) {
+                // Short, so a panel that's gone is noticed now rather than after a session's 50 s.
+                tech.timeout = PING_TIMEOUT_MS
+                try {
+                    tech.transceive(PRESENCE_PING)
+                    return
+                } catch (e: IOException) {
+                    // Silent isn't gone: a refresh that ran out of power leaves the panel briefly
+                    // unresponsive while it's still sitting there. Declaring it lost then left the
+                    // phone holding a tag the app had given up on, so nothing re-detected it until
+                    // it was physically pulled away (2026-10-10). A reconnect settles it either way:
+                    // it succeeds if the panel's there, and if it isn't, it fails *and* makes the
+                    // platform let go, so putting the panel back is a fresh discovery.
+                }
+            }
+            tech.close()
+            tech.connect()
+        }
     }
 
-    /** [NfcA.isConnected] throws rather than returning false once the handle goes stale. */
-    private fun isStillConnected(nfcA: NfcA): Boolean =
+    /** `isConnected` throws rather than returning false once the handle goes stale. */
+    private fun isStillConnected(tech: TagTechnology): Boolean =
         try {
-            nfcA.isConnected
+            tech.isConnected
         } catch (e: Throwable) {
             false
         }

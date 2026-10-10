@@ -30,7 +30,7 @@ class FakePanel implements PanelTransport {
   var _polls = 0;
   var _refreshes = 0;
 
-  /// The data last written to register 22: `C7` makes the next `20` a refresh, `91` a waveform load.
+  /// The data last written to register 22: `C7`/`F7` make the next `20` a refresh, `91` a waveform load.
   var _mode = '';
 
   @override
@@ -47,7 +47,7 @@ class FakePanel implements PanelTransport {
     if (hex(apdu).startsWith('74 9A 00 0E 01 ')) {
       _mode = hex(apdu).substring(15);
     }
-    if (_mode == 'C7' && hex(apdu) == '74 99 00 0D 01 20') {
+    if ((_mode == 'C7' || _mode == 'F7') && hex(apdu) == '74 99 00 0D 01 20') {
       _refreshes++;
       _polls = 0;
     }
@@ -85,7 +85,7 @@ String hex(List<int> bytes) => bytes
 
 /// The command sequence that drew a frame on the real panel, 2026-10-10. Pinned exactly: none of
 /// it fails loudly if wrong, the panel just doesn't change.
-const _expectedPreamble = [
+final _expectedPreamble = [
   '74 B1 00 00 08 00 11 22 33 44 55 66 77',
   '74 B3 00 00 01 00',
   '74 97 01 08 00',
@@ -95,11 +95,7 @@ const _expectedPreamble = [
   '74 9A 00 0E 02 48 00',
   '74 99 00 0D 01 3C',
   '74 9A 00 0E 01 05',
-  '74 99 00 0D 01 1A',
-  '74 9A 00 0E 01 6E',
-  '74 99 00 0D 01 22',
-  '74 9A 00 0E 01 91',
-  '74 99 00 0D 01 20',
+  ..._waveformSetup,
   '74 99 00 0D 01 11',
   '74 9A 00 0E 01 03',
   '74 99 00 0D 01 44',
@@ -112,6 +108,25 @@ const _expectedPreamble = [
   '74 9A 00 0E 02 00 00',
   '74 99 00 0D 01 24',
 ];
+
+/// The waveform part of the setup. The fast one is the vendor's, proven on hardware 2026-10-10.
+final _waveformSetup = Rev22Protocol.fastWaveform
+    ? [
+        '74 99 00 0D 01 1A',
+        '74 9A 00 0E 01 6E',
+        '74 99 00 0D 01 22',
+        '74 9A 00 0E 01 91',
+        '74 99 00 0D 01 20',
+      ]
+    : ['74 99 00 0D 01 18', '74 9A 00 0E 01 80'];
+
+/// What's written to register 22 to start the refresh.
+final _refreshData = Rev22Protocol.fastWaveform
+    ? '74 9A 00 0E 01 C7'
+    : '74 9A 00 0E 01 F7';
+
+/// Deep sleep, mode 1 — sent once the refresh has finished.
+const _deepSleep = ['74 99 00 0D 01 10', '74 9A 00 0E 01 01'];
 
 void main() {
   final frame = Uint8List.fromList(
@@ -128,10 +143,62 @@ void main() {
     final afterData = commands.skip(_expectedPreamble.length + 60).toList();
     expect(afterData.take(3), [
       '74 99 00 0D 01 22',
-      '74 9A 00 0E 01 C7',
+      _refreshData,
       '74 99 00 0D 01 20',
     ]);
-    expect(afterData.skip(3), everyElement('74 9B 00 0F 01'));
+    final polls = afterData.sublist(3, afterData.length - 2);
+    expect(polls, everyElement('74 9B 00 0F 01'));
+    expect(afterData.skip(afterData.length - 2), _deepSleep);
+  });
+
+  test('puts the controller to sleep once the picture is up', () async {
+    // Pulled away awake, white areas came up speckled; Waveshare's wired drivers end with this.
+    final panel = FakePanel();
+    await protocolFor(panel, FakeTime()).writeFrame(device, frame);
+    final commands = panel.sent.map(hex).toList();
+    expect(commands.skip(commands.length - 2), _deepSleep);
+    // After the refresh has finished, never during it.
+    expect(hex(panel.sent[panel.sent.length - 3]), '74 9B 00 0F 01');
+  });
+
+  test(
+    'holds the panel, quietly, for the settle time before reporting done',
+    () async {
+      // Pulled away ~3 s after busy cleared, the white turned to speckle; after ~10 s it stayed clean.
+      final time = FakeTime();
+      final panel = FakePanel(clock: () => time.now);
+      final progress = <(DateTime, int)>[];
+      await protocolFor(panel, time).writeFrame(
+        device,
+        frame,
+        onProgress: (p) => progress.add((time.now, p)),
+      );
+
+      // Nothing sent after the sleep command, for the whole settle.
+      expect(hex(panel.sent.last), '74 9A 00 0E 01 01');
+      expect(
+        time.now.difference(panel.sentAt.last),
+        greaterThanOrEqualTo(Rev22Protocol.settleTime),
+      );
+      // 100 only at the very end — "done" means safe to lift.
+      final firstHundred = progress.firstWhere((e) => e.$2 == 100).$1;
+      expect(firstHundred, time.now);
+    },
+  );
+
+  test('a refused sleep still counts as a finished write', () async {
+    // The picture is already up; a panel pulled away that instant just misses the sleep.
+    final panel = FakePanel(refuse: [0x74, 0x99, 0x00, 0x0D, 0x01, 0x10]);
+    await protocolFor(panel, FakeTime()).writeFrame(device, frame);
+  });
+
+  test('no sleep when the refresh did not run', () async {
+    final panel = FakePanel(deadRefreshes: 99);
+    await expectLater(
+      protocolFor(panel, FakeTime()).writeFrame(device, frame),
+      throwsA(isA<RefreshNotStarted>()),
+    );
+    expect(panel.sent.map(hex), isNot(contains('74 99 00 0D 01 10')));
   });
 
   test(
@@ -188,7 +255,7 @@ void main() {
   });
 
   int refreshCount(FakePanel panel) =>
-      panel.sent.where((a) => hex(a) == '74 9A 00 0E 01 C7').length;
+      panel.sent.where((a) => hex(a) == _refreshData).length;
 
   test('a refresh that never goes busy is a failure, not a success', () async {
     // Seen on hardware: every command accepted, busy never raised, old picture left up.
