@@ -36,7 +36,8 @@ android {
     defaultConfig {
         // Permanent once on Google Play — never change it.
         applicationId = "com.nicksullivan.mtg_eink"
-        minSdk = flutter.minSdkVersion
+        // Play's automatic protection refuses bundles below API 24; Flutter 3.32's default is 21.
+        minSdk = 24
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
