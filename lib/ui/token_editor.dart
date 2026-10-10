@@ -3,7 +3,10 @@ import 'package:flutter/services.dart';
 
 import '../models/creature_art.dart';
 import '../models/token_content.dart';
+import '../render/image_content.dart';
 import '../render/token_painter.dart';
+import 'crop_view.dart';
+import 'widgets/image_controls.dart';
 
 /// Controls for an MTG token: name, art, type line, ability text, power and toughness.
 ///
@@ -14,6 +17,10 @@ class TokenEditor extends StatefulWidget {
   const TokenEditor({
     required this.content,
     required this.onChanged,
+    required this.picture,
+    required this.picking,
+    required this.onPickPicture,
+    required this.onPictureChanged,
     required this.busy,
     required this.onSave,
     super.key,
@@ -21,6 +28,16 @@ class TokenEditor extends StatefulWidget {
 
   final TokenContent content;
   final ValueChanged<TokenContent> onChanged;
+
+  /// A picture for the art box, overriding the preset creature. Null for none.
+  final ImageContent? picture;
+
+  final bool picking;
+  final VoidCallback onPickPicture;
+
+  /// Null removes the picture, putting the preset back.
+  final ValueChanged<ImageContent?> onPictureChanged;
+
   final bool busy;
   final VoidCallback onSave;
 
@@ -109,8 +126,58 @@ class _TokenEditorState extends State<TokenEditor> {
         const SizedBox(height: 16),
         _ArtPicker(
           selected: content.art,
-          onChanged: (id) => widget.onChanged(content.copyWith(art: () => id)),
+          hasPicture: widget.picture != null,
+          onPickPicture: widget.picking ? null : widget.onPickPicture,
+          onChanged: (id) {
+            widget.onPictureChanged(null);
+            widget.onChanged(content.copyWith(art: () => id));
+          },
         ),
+        if (widget.picture case final picture?) ...[
+          const SizedBox(height: 12),
+          // Capped like the main preview: an art box on the 4.2" is taller than the 2.9"'s whole card.
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.black54),
+                ),
+                child: CropView(
+                  content: picture,
+                  onChanged: widget.onPictureChanged,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          ZoomRow(image: picture, onChanged: widget.onPictureChanged),
+          const SizedBox(height: 4),
+          DitherStyleControl(
+            image: picture,
+            onChanged: widget.onPictureChanged,
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: widget.picking ? null : widget.onPickPicture,
+                  icon: const Icon(Icons.photo_library_outlined),
+                  label: const Text('Different image'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => widget.onPictureChanged(null),
+                  icon: const Icon(Icons.hide_image_outlined),
+                  label: const Text('Remove'),
+                ),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 16),
         _field(_type, 'Type', (v) => content.copyWith(type: v)),
         const SizedBox(height: 16),
@@ -156,19 +223,33 @@ class _TokenEditorState extends State<TokenEditor> {
   }
 }
 
-/// The art dropdown: a preset creature, or none for the plain hatch.
+/// The art dropdown: a picture from the gallery, a preset creature, or none for the plain hatch.
 ///
-/// Changes only the picture — the name, type and P/T are left as typed.
+/// Changes only the art — the name, type and P/T are left as typed.
 class _ArtPicker extends StatelessWidget {
-  const _ArtPicker({required this.selected, required this.onChanged});
+  const _ArtPicker({
+    required this.selected,
+    required this.hasPicture,
+    required this.onPickPicture,
+    required this.onChanged,
+  });
+
+  /// Stands in for "a picture" among the creature ids; no art id can start with a NUL.
+  static const _picture = '\u0000picture';
 
   final String? selected;
+  final bool hasPicture;
+
+  /// Null while a picker is already open.
+  final VoidCallback? onPickPicture;
+
+  /// A preset was chosen, or null for the hatch.
   final ValueChanged<String?> onChanged;
 
   @override
   Widget build(BuildContext context) {
     // An id this build doesn't know shows as "None" rather than failing the dropdown's assert.
-    final value = CreatureArt.byId(selected)?.id;
+    final value = hasPicture ? _picture : CreatureArt.byId(selected)?.id;
 
     Widget row(Widget thumb, String label) => Row(
       children: [
@@ -189,8 +270,23 @@ class _ArtPicker extends StatelessWidget {
           value: value,
           isExpanded: true,
           menuMaxHeight: 420,
-          onChanged: onChanged,
+          onChanged: (id) {
+            if (id == _picture) {
+              // Choosing it again while a picture is set picks a new one.
+              onPickPicture?.call();
+            } else {
+              onChanged(id);
+            }
+          },
           items: [
+            DropdownMenuItem(
+              value: _picture,
+              enabled: onPickPicture != null,
+              child: row(
+                const Icon(Icons.photo_library_outlined),
+                hasPicture ? 'Picture' : 'From image…',
+              ),
+            ),
             DropdownMenuItem(
               value: null,
               child: row(const Icon(Icons.texture), 'None'),

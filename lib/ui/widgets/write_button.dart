@@ -54,11 +54,17 @@ class WriteOverlay extends StatelessWidget {
     required this.percent,
     required this.holdFor,
     required this.onCancel,
+    this.checking = false,
     this.notice,
     super.key,
   });
 
   final bool writing;
+
+  /// Writing, but still finding out whether this spot can power a refresh. How long to hold still
+  /// only means anything once it can — the write proper starts after this.
+  final bool checking;
+
   final int percent;
 
   /// How long a write takes on this panel, to tell you how long to hold still.
@@ -156,7 +162,10 @@ class WriteOverlay extends StatelessWidget {
           borderRadius: const BorderRadius.all(Radius.circular(4)),
         ),
         const SizedBox(height: 20),
-        Text('Writing…', style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          checking ? 'Checking this spot…' : 'Writing…',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
         if (notice case final notice?) ...[
           const SizedBox(height: 8),
           Text(
@@ -165,12 +174,14 @@ class WriteOverlay extends StatelessWidget {
             style: TextStyle(color: Colors.orange.shade900),
           ),
         ],
-        const SizedBox(height: 4),
-        Text(
-          'Hold still — about ${holdFor.inSeconds} seconds.',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontStyle: FontStyle.italic),
-        ),
+        if (!checking) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Hold still — about ${holdFor.inSeconds} seconds.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontStyle: FontStyle.italic),
+          ),
+        ],
       ],
     );
   }

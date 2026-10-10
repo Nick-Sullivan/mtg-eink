@@ -17,12 +17,14 @@ import '../render/image_content.dart';
 import '../render/quantiser.dart';
 import '../render/token_painter.dart';
 import '../services/design_store.dart';
+import '../services/settings_store.dart';
 import 'crop_view.dart';
 import 'image_editor.dart';
 import 'library_view.dart';
 import 'settings_view.dart';
 import 'text_editor.dart';
 import 'token_editor.dart';
+import 'token_preview.dart';
 import 'widgets/info_banner.dart';
 import 'widgets/name_dialog.dart';
 import 'widgets/write_button.dart';
@@ -50,12 +52,18 @@ class _HomePageState extends State<HomePage>
   final _channel = ApduChannel();
   final _textController = TextEditingController(text: 'HELLO');
   final _store = DesignStore();
+  final _settings = SettingsStore();
 
   AppTab _tab = AppTab.text;
+  /// The panel being composed for. Remembered, so the app opens on whichever was last in use —
+  /// picked in Settings or detected.
   PanelDevice _device = PanelDevice.waveshare29G;
   late PanelContent _content = PanelContent.forDevice(_device, text: 'HELLO');
   ImageContent? _image;
   TokenContent _token = const TokenContent();
+
+  /// A picture in the token's art box, framed to it. Overrides the token's preset art.
+  ImageContent? _tokenPicture;
   List<SavedDesign> _designs = const [];
 
   TagDetected? _tag;
@@ -64,6 +72,10 @@ class _HomePageState extends State<HomePage>
 
   bool _picking = false;
   bool _writing = false;
+
+  /// Mid-write on the 4.2", still finding out whether this spot can power a refresh.
+  bool _checkingSpot = false;
+
   int _percent = 0;
   String? _error;
 
@@ -108,6 +120,17 @@ class _HomePageState extends State<HomePage>
       ),
     );
     _reloadLibrary();
+    _loadLastDevice();
+  }
+
+  Future<void> _loadLastDevice() async {
+    final id = await _settings.lastPanelId();
+    final saved = PanelDevice.supported.where((d) => d.id == id).firstOrNull;
+    if (saved == null || !mounted) return;
+    // Unless a panel was already detected, or a write begun, in the moment that took.
+    if (_device == PanelDevice.waveshare29G && _tag == null && !_armed) {
+      _changeDevice(saved);
+    }
   }
 
   @override
@@ -116,6 +139,7 @@ class _HomePageState extends State<HomePage>
     _tabs.dispose();
     _textController.dispose();
     _image?.source.dispose();
+    _tokenPicture?.source.dispose();
     super.dispose();
   }
 
@@ -191,7 +215,7 @@ class _HomePageState extends State<HomePage>
         final image = _image;
         return image == null ? null : renderImageFrame(image);
       case AppTab.token:
-        return renderTokenFrame(_device, _token);
+        return renderTokenFrame(_device, _token, picture: _tokenPicture);
       case AppTab.saved:
       case AppTab.settings:
         return null;
@@ -202,18 +226,43 @@ class _HomePageState extends State<HomePage>
   /// colours go back to the new panel's own paper and pen, and a picture is re-framed to fill the
   /// new canvas — its pan and zoom were measured in the old one's pixels.
   void _changeDevice(PanelDevice device) {
+    if (device != _device) _settings.setLastPanelId(device.id);
     setState(() {
       _device = device;
-      _content = PanelContent.forDevice(device, text: _content.text);
-      final image = _image;
-      if (image != null) {
-        _image = ImageContent(
-          device: device,
-          source: image.source,
-          bytes: image.bytes,
-          style: image.style,
-        ).recentred();
+      _content = PanelContent.forDevice(
+        device,
+        text: _content.text,
+        landscape: _content.landscape,
+      );
+      _image = _image?.reframed(device: device).recentred();
+      _tokenPicture = _fittedToArtBox(_tokenPicture);
+    });
+  }
+
+  /// [picture] reframed to the token's art box on the current panel, if it isn't already.
+  ///
+  /// The box changes height as ability text comes and goes, and shape with the panel. Reframing
+  /// keeps the zoom and whatever was centred, so the picture doesn't jump about as you type.
+  ImageContent? _fittedToArtBox(ImageContent? picture) {
+    if (picture == null) return null;
+    final box = tokenArtBox(_device, _token);
+    if (picture.device == _device && picture.box == box) return picture;
+    return picture.reframed(device: _device, box: () => box);
+  }
+
+  void _setToken(TokenContent token) => setState(() {
+    _token = token;
+    _tokenPicture = _fittedToArtBox(_tokenPicture);
+  });
+
+  /// Replaces the token's picture, disposing whatever it displaces. Null removes it.
+  void _setTokenPicture(ImageContent? picture) {
+    if (identical(picture, _tokenPicture)) return;
+    setState(() {
+      if (picture?.source != _tokenPicture?.source) {
+        _tokenPicture?.source.dispose();
       }
+      _tokenPicture = picture;
     });
   }
 
@@ -236,23 +285,46 @@ class _HomePageState extends State<HomePage>
     _tabs.animateTo(AppTab.image.index);
   }
 
-  Future<void> _pickImage() async {
+  /// Picks a picture from the gallery and decodes it. Null if nothing was picked, or this page went
+  /// away meanwhile.
+  Future<({Uint8List bytes, ui.Image decoded})?> _pickPicture() async {
     setState(() => _picking = true);
     try {
       final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
-      if (picked == null) return;
+      if (picked == null) return null;
 
       final bytes = await picked.readAsBytes();
       final decoded = await _decodeBounded(bytes);
 
       if (!mounted) {
         decoded.dispose();
-        return;
+        return null;
       }
-      _setImage(ImageContent(device: _device, source: decoded, bytes: bytes));
+      return (bytes: bytes, decoded: decoded);
     } finally {
       if (mounted) setState(() => _picking = false);
     }
+  }
+
+  Future<void> _pickImage() async {
+    final picked = await _pickPicture();
+    if (picked == null) return;
+    _setImage(
+      ImageContent(device: _device, source: picked.decoded, bytes: picked.bytes),
+    );
+  }
+
+  Future<void> _pickTokenPicture() async {
+    final picked = await _pickPicture();
+    if (picked == null) return;
+    _setTokenPicture(
+      ImageContent(
+        device: _device,
+        source: picked.decoded,
+        bytes: picked.bytes,
+        box: tokenArtBox(_device, _token),
+      ).recentred(),
+    );
   }
 
   // --------------------------------------------------------------- library
@@ -270,11 +342,7 @@ class _HomePageState extends State<HomePage>
   /// fields, so it's editable rather than a flat picture.
   Future<void> _openDesign(SavedDesign design) async {
     if (design.token case final token?) {
-      setState(() {
-        _token = token;
-        _tab = AppTab.token;
-      });
-      _tabs.animateTo(AppTab.token.index);
+      await _openToken(design, token);
       return;
     }
 
@@ -328,15 +396,52 @@ class _HomePageState extends State<HomePage>
         offset: settings.offset,
         scale: settings.scale,
         style: settings.style,
+        landscape: settings.landscape,
       ),
       recentre: !sameDevice,
     );
+  }
+
+  /// Opens a saved token in the MTG tab, with its picture if it had one.
+  Future<void> _openToken(SavedDesign design, TokenContent token) async {
+    ImageContent? picture;
+    final settings = design.settings;
+    if (design.hasSource && settings != null) {
+      final source = await _store.readSource(design.id);
+      if (!mounted) return;
+      if (source != null) {
+        final decoded = await _decodeBounded(source);
+        if (!mounted) {
+          decoded.dispose();
+          return;
+        }
+        picture = ImageContent(
+          device: _device,
+          source: decoded,
+          bytes: source,
+          offset: settings.offset,
+          scale: settings.scale,
+          style: settings.style,
+          box: tokenArtBox(_device, token),
+        );
+        // The saved framing is in the original panel's art box; on another panel, start centred.
+        if (design.deviceId != _device.id) picture = picture.recentred();
+      }
+    }
+
+    setState(() {
+      _token = token;
+      _tab = AppTab.token;
+    });
+    _setTokenPicture(picture);
+    _tabs.animateTo(AppTab.token.index);
   }
 
   /// Saves whatever the active tab is composing — an image or a token.
   Future<void> _saveCurrent() async {
     final image = _image;
     final token = _token;
+    final picture = _tokenPicture;
     if (_tab == AppTab.image && image == null) return;
 
     final frame = await _currentFrame();
@@ -360,6 +465,14 @@ class _HomePageState extends State<HomePage>
         deviceId: _device.id,
         frame: frame,
         token: token,
+        source: picture?.bytes,
+        settings: picture == null
+            ? null
+            : ImageSettings(
+                offset: picture.offset,
+                scale: picture.scale,
+                style: picture.style,
+              ),
       );
     } else {
       await _store.save(
@@ -371,6 +484,7 @@ class _HomePageState extends State<HomePage>
           offset: image.offset,
           scale: image.scale,
           style: image.style,
+          landscape: image.landscape,
         ),
       );
     }
@@ -435,9 +549,9 @@ class _HomePageState extends State<HomePage>
       _arrivedWhileWriting = false;
       _percent = 0;
       _error = null;
-      if (_device.protocol == PanelProtocol.rev22) {
-        _retryNotice = 'Checking this spot…';
-      }
+      // The 4.2" first proves the spot can power a refresh; until then there's no write to time.
+      _checkingSpot = _device.protocol == PanelProtocol.rev22;
+      if (_checkingSpot) _retryNotice = null;
     });
 
     String? error;
@@ -455,9 +569,11 @@ class _HomePageState extends State<HomePage>
         // The spot can power a refresh: say so now, before the upload, so it's held still.
         onSpotFound: () {
           if (mounted) {
-            setState(
-              () => _retryNotice = 'Good spot — hold still while it writes.',
-            );
+            // "Hold still" with the time follows on its own; nothing else needs saying.
+            setState(() {
+              _checkingSpot = false;
+              _retryNotice = null;
+            });
           }
         },
       );
@@ -486,6 +602,7 @@ class _HomePageState extends State<HomePage>
     if (!mounted) return;
     setState(() {
       _writing = false;
+      _checkingSpot = false;
       _error = retry ? null : error;
       _retryNotice = lost
           ? 'Lost the panel. Lift it away and bring it back.'
@@ -544,6 +661,7 @@ class _HomePageState extends State<HomePage>
                 ? WriteOverlay(
                     key: const ValueKey('write-overlay'),
                     writing: _writing,
+                    checking: _checkingSpot,
                     percent: _percent,
                     holdFor: _device.typicalWrite,
                     notice: _retryNotice,
@@ -604,7 +722,8 @@ class _HomePageState extends State<HomePage>
             children: [
               switch (_tab) {
                 AppTab.settings => SizedBox(
-                  height: 460,
+                  // Tall enough for the credits, which the art's licence requires be shown.
+                  height: 560,
                   child: SettingsView(
                     device: _device,
                     onDeviceChanged: _changeDevice,
@@ -658,10 +777,11 @@ class _HomePageState extends State<HomePage>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // The panel is tall and narrow, so cap the preview's height rather than letting it eat
-        // the screen.
+        // the screen. A cap rather than a fixed height: on its side, the panel is limited by the
+        // screen's width instead, and a fixed height would stretch it past that.
         Center(
-          child: SizedBox(
-            height: 280,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 280),
             child: DecoratedBox(
               // A dark hairline plus a drop shadow, so the edge stays visible even when the frame
               // itself is white right up to the border.
@@ -680,18 +800,20 @@ class _HomePageState extends State<HomePage>
                   content: picked,
                   onChanged: (c) => setState(() => _image = c),
                 ),
-                (AppTab.image, null) => const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(16),
+                (AppTab.image, null) => AspectRatio(
+                  aspectRatio: _device.size.width / _device.size.height,
+                  child: const Center(
                     child: Text(
                       'No image picked',
+                      textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.black45),
                     ),
                   ),
                 ),
-                (AppTab.token, _) => PaintedPreview(
+                (AppTab.token, _) => TokenPreview(
                   device: _device,
-                  paint: (canvas) => paintToken(canvas, _device, _token),
+                  token: _token,
+                  picture: _tokenPicture,
                 ),
                 _ => PanelPreview(device: _device, content: _content),
               },
@@ -711,7 +833,11 @@ class _HomePageState extends State<HomePage>
           ),
           AppTab.token => TokenEditor(
             content: _token,
-            onChanged: (t) => setState(() => _token = t),
+            onChanged: _setToken,
+            picture: _tokenPicture,
+            picking: _picking,
+            onPickPicture: _pickTokenPicture,
+            onPictureChanged: _setTokenPicture,
             busy: _writing,
             onSave: _saveCurrent,
           ),

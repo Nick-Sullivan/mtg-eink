@@ -14,17 +14,23 @@ class ImageSettings {
     required this.offset,
     required this.scale,
     required this.style,
+    this.landscape = false,
   });
 
   final Offset offset;
   final double scale;
   final DitherStyle style;
 
+  /// Framed along the panel's long edge. Absent, and so false, for designs saved before there was a
+  /// choice — and always false for a token's art, which is framed in the art box.
+  final bool landscape;
+
   Map<String, Object?> toJson() => {
     'dx': offset.dx,
     'dy': offset.dy,
     'scale': scale,
     'style': style.name,
+    if (landscape) 'landscape': true,
   };
 
   factory ImageSettings.fromJson(Map<String, Object?> json) => ImageSettings(
@@ -37,6 +43,7 @@ class ImageSettings {
       (s) => s.name == json['style'],
       orElse: () => DitherStyle.photo,
     ),
+    landscape: json['landscape'] as bool? ?? false,
   );
 }
 
@@ -78,7 +85,8 @@ class SavedDesign {
   /// [PanelDevice.waveshare29G].
   static const legacyDeviceId = 'waveshare-2.9-g';
 
-  /// How the source was framed. Null for designs saved before sources were kept.
+  /// How the source was framed. Null for designs saved before sources were kept, and for tokens
+  /// without a picture — a token's is the picture in its art box.
   final ImageSettings? settings;
 
   /// Whether the original picture is on disk alongside. Read it with `DesignStore.readSource`.

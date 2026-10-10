@@ -158,6 +158,11 @@ order, but not a commitment to that order.
 - [x] Atkinson error diffusion, serpentine, with auto-levels for photos.
 - [x] Preview shows the **quantised** result, not the source.
 - [x] Photo / Graphic toggle — flat nearest-colour is the right answer for logos and line art.
+- [x] Portrait / Landscape, for Text and Image. A landscape design is drawn and quantised on its
+      side, and only the finished ink codes are turned upright (`packCodes`), so dithering follows
+      the picture's own rows and text is never rasterised sideways. The drawing's top runs down the
+      canvas's right edge; there's one direction only, since turning the panel round gives the
+      other. Saved images remember it. **Not yet written to a panel.**
 - [ ] **Judge it on real photographs and tune.** Nothing below has been checked against the panel.
 
 > **The trap, and why the code looks the way it does.** The problem isn't the missing green and
@@ -217,6 +222,13 @@ and ideally art.
 - [x] Preset creature art: a dropdown of 31 silhouettes from game-icons.net (CC BY 3.0 — the
       credit is in Settings and must stay there), stored as SVG path data in
       `lib/models/creature_art.dart`. Picking one changes only the art. "None" keeps the hatch.
+- [x] Art from a picture ("From image…" in the art dropdown), framed in the art box with the same
+      crop, zoom and Photo/Graphic controls as the Image tab. The card is packed flat and the
+      picture quantised on its own pixels, then laid over the art box (`overlayCodes`) — dithering
+      the whole card would speckle the text, and the paper would throw off the picture's levels. The
+      box is snapped to whole pixels (`TokenLayout.artPixels`) and the picture is reframed, keeping
+      zoom and centre, as ability text changes the box's height. Saved like an image's source.
+      **Not yet written to a panel.**
 - [x] Save tokens to the library. Same `designs/` store; the index entry carries `kind: token` and
       the fields, so opening one lands in the MTG tab, editable. Entries without a kind are images.
 - [ ] Batch mode: hold a queue of tokens and write them one per tap, so a set of panels can be

@@ -344,6 +344,10 @@ than trusting either reading.
 
 ## Log
 
+- **2026-10-10** — Landscape for Text and Image, and MTG token art from a picture (M6/M8 in the
+  plan). Built and unit-tested; **not yet written to either panel.** The quantiser now has a
+  size-agnostic core (`Quantiser.quantiseToCodes`); `quantiseToFrame` wraps it unchanged.
+
 - **2026-10-10** — Added the Waveshare 4.2" (Rev2.2) black-and-white panel; see Status. New:
   Diagnostics page, `Rev22Protocol`, canvas/frame coordinates and ATS detection on `PanelDevice`,
   per-panel saved designs, `.dev` debug application ID.

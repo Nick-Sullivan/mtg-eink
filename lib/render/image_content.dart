@@ -8,10 +8,14 @@ import '../models/panel_device.dart';
 import 'frame_packer.dart';
 import 'quantiser.dart';
 
-/// An imported image, positioned within a panel's frame.
+/// An imported image, positioned within a frame.
 ///
-/// [offset] and [scale] are in **panel pixels**, not screen pixels, so the same values drive the
-/// on-screen crop view and the real render at whatever size each happens to be drawn.
+/// The frame is normally the whole panel canvas, turned on its side when [landscape]. A token's art
+/// box passes [box] instead, and the picture fills just that.
+///
+/// [offset] and [scale] are in **panel pixels** relative to the frame's top-left, not screen pixels,
+/// so the same values drive the on-screen crop view and the real render at whatever size each
+/// happens to be drawn.
 @immutable
 class ImageContent {
   const ImageContent({
@@ -21,6 +25,8 @@ class ImageContent {
     this.offset = Offset.zero,
     this.scale = 1,
     this.style = DitherStyle.photo,
+    this.landscape = false,
+    this.box,
   });
 
   final PanelDevice device;
@@ -36,6 +42,15 @@ class ImageContent {
   final double scale;
   final DitherStyle style;
 
+  /// Framed along the panel's long edge. Ignored when [box] is given.
+  final bool landscape;
+
+  /// An explicit frame size, for a picture that fills part of a design rather than the whole panel.
+  final Size? box;
+
+  /// What the picture is framed in, in panel pixels.
+  Size get frame => box ?? device.canvasSizeFor(landscape: landscape);
+
   ImageContent copyWith({Offset? offset, double? scale, DitherStyle? style}) {
     return ImageContent(
       device: device,
@@ -44,13 +59,42 @@ class ImageContent {
       offset: offset ?? this.offset,
       scale: scale ?? this.scale,
       style: style ?? this.style,
+      landscape: landscape,
+      box: box,
+    );
+  }
+
+  /// The same picture in a different frame — another panel, the other orientation, or a resized
+  /// box — keeping the zoom and whatever was at the centre.
+  ///
+  /// Pan and zoom are measured in the old frame's pixels, so they can't simply carry over. Callers
+  /// that would rather start afresh follow this with [recentred].
+  ImageContent reframed({
+    PanelDevice? device,
+    bool? landscape,
+    ValueGetter<Size?>? box,
+  }) {
+    final next = ImageContent(
+      device: device ?? this.device,
+      source: source,
+      bytes: bytes,
+      style: style,
+      landscape: landscape ?? this.landscape,
+      box: box == null ? this.box : box(),
+    );
+    final centre = frame.center(Offset.zero);
+    final pinned = (centre - offset) / scale;
+    final newScale = next.coverScale * zoom;
+    return next.copyWith(
+      scale: newScale,
+      offset: next.frame.center(Offset.zero) - pinned * newScale,
     );
   }
 
   /// The scale at which the image just covers the frame.
   double get coverScale {
-    final byWidth = device.size.width / source.width;
-    final byHeight = device.size.height / source.height;
+    final byWidth = frame.width / source.width;
+    final byHeight = frame.height / source.height;
     return byWidth > byHeight ? byWidth : byHeight;
   }
 
@@ -60,7 +104,7 @@ class ImageContent {
   /// Rescales about the centre of the frame, so zooming doesn't also drift the subject away.
   ImageContent zoomedTo(double newZoom) {
     final newScale = coverScale * newZoom;
-    final centre = Offset(device.size.width / 2, device.size.height / 2);
+    final centre = frame.center(Offset.zero);
     return copyWith(
       scale: newScale,
       offset: centre - (centre - offset) * (newScale / scale),
@@ -73,23 +117,20 @@ class ImageContent {
     return copyWith(
       scale: scale,
       offset: Offset(
-        (device.size.width - source.width * scale) / 2,
-        (device.size.height - source.height * scale) / 2,
+        (frame.width - source.width * scale) / 2,
+        (frame.height - source.height * scale) / 2,
       ),
     );
   }
 }
 
-/// Draws [content] in panel coordinates, on the device's background ink.
+/// Draws [content] filling its frame, origin top-left, on the device's background ink.
 void paintImageContent(Canvas canvas, ImageContent content) {
-  final size = content.device.size;
-  canvas.drawRect(
-    Rect.fromLTWH(0, 0, size.width, size.height),
-    Paint()..color = content.device.background,
-  );
+  final bounds = Offset.zero & content.frame;
+  canvas.drawRect(bounds, Paint()..color = content.device.background);
 
   canvas.save();
-  canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
+  canvas.clipRect(bounds);
   paintImageOnly(canvas, content);
   canvas.restore();
 }
@@ -110,53 +151,76 @@ void paintImageOnly(Canvas canvas, ImageContent content) {
   canvas.restore();
 }
 
-/// Renders [content] into the device's frame and quantises it to the panel's inks.
-Future<Uint8List> renderImageFrame(ImageContent content) async {
-  final device = content.device;
+/// Renders [content] filling its frame and quantises it: one ink code per pixel, row by row.
+///
+/// The frame must be whole pixels — a token's art box is snapped before it gets here.
+Future<Uint8List> renderImageCodes(ImageContent content) async {
+  final size = content.frame;
+  assert(size.width == size.width.roundToDouble());
+  assert(size.height == size.height.roundToDouble());
+
   final recorder = ui.PictureRecorder();
-  final canvas = Canvas(
-    recorder,
-    Rect.fromLTWH(0, 0, device.size.width, device.size.height),
-  );
+  final canvas = Canvas(recorder, Offset.zero & size);
 
   paintImageContent(canvas, content);
 
   final image = await recorder.endRecording().toImage(
-    device.canvasWidth,
-    device.canvasHeight,
+    size.width.round(),
+    size.height.round(),
   );
   try {
-    return await FramePacker.pack(device, image, style: content.style);
+    return await FramePacker.quantiseImage(
+      content.device,
+      image,
+      content.style,
+    );
   } finally {
     image.dispose();
   }
 }
 
-/// Renders [content] to an image showing exactly the inks the panel will use.
+/// Renders [content] into the device's frame and quantises it to the panel's inks.
+///
+/// For a picture that fills the panel — one with no [ImageContent.box].
+Future<Uint8List> renderImageFrame(ImageContent content) async {
+  assert(content.box == null, 'A boxed picture is packed by its owner.');
+  return packCodes(
+    content.device,
+    await renderImageCodes(content),
+    landscape: content.landscape,
+  );
+}
+
+/// Renders [content] to an image showing exactly the inks the panel will use, frame-sized.
 ///
 /// The preview round-trips through the quantiser rather than just drawing the source: on a palette
 /// this narrow the difference between an image and its approximation is enormous, and a preview of
 /// the original would be actively misleading.
 Future<ui.Image> renderImagePreview(ImageContent content) async {
-  return decodeFrame(content.device, await renderImageFrame(content));
+  final size = content.frame;
+  return codesToImage(
+    content.device,
+    await renderImageCodes(content),
+    size.width.round(),
+    size.height.round(),
+  );
 }
 
-/// Expands a packed frame back into a viewable image, the right way up, in the palette's on-screen
-/// colours.
-Future<ui.Image> decodeFrame(PanelDevice device, Uint8List frame) {
-  final width = device.canvasWidth;
-  final height = device.canvasHeight;
+/// One ink code per pixel, row by row, as a viewable image in the palette's on-screen colours.
+Future<ui.Image> codesToImage(
+  PanelDevice device,
+  Uint8List codes,
+  int width,
+  int height,
+) {
+  assert(codes.length == width * height);
   final rgba = Uint8List(width * height * 4);
-
-  for (var y = 0; y < height; y++) {
-    for (var x = 0; x < width; x++) {
-      final colour = device.palette[codeAtCanvas(device, frame, x, y)];
-      final out = (y * width + x) * 4;
-      rgba[out] = (colour.r * 255).round();
-      rgba[out + 1] = (colour.g * 255).round();
-      rgba[out + 2] = (colour.b * 255).round();
-      rgba[out + 3] = 255;
-    }
+  for (var p = 0; p < codes.length; p++) {
+    final colour = device.palette[codes[p]];
+    rgba[p * 4] = (colour.r * 255).round();
+    rgba[p * 4 + 1] = (colour.g * 255).round();
+    rgba[p * 4 + 2] = (colour.b * 255).round();
+    rgba[p * 4 + 3] = 255;
   }
 
   final completer = Completer<ui.Image>();
@@ -168,4 +232,26 @@ Future<ui.Image> decodeFrame(PanelDevice device, Uint8List frame) {
     completer.complete,
   );
   return completer.future;
+}
+
+/// Expands a packed frame back into a viewable image, the right way up, in the palette's on-screen
+/// colours — on its side if it was drawn [landscape].
+Future<ui.Image> decodeFrame(
+  PanelDevice device,
+  Uint8List frame, {
+  bool landscape = false,
+}) {
+  final size = device.canvasSizeFor(landscape: landscape);
+  final width = size.width.round();
+  final height = size.height.round();
+  final codes = Uint8List(width * height);
+
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      codes[y * width + x] = landscape
+          ? codeAtLandscape(device, frame, x, y)
+          : codeAtCanvas(device, frame, x, y);
+    }
+  }
+  return codesToImage(device, codes, width, height);
 }

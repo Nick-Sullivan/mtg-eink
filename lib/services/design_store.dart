@@ -15,7 +15,7 @@ import '../models/token_content.dart';
 /// designs/
 ///   index.json        metadata: kind, framing settings or token fields, newest first
 ///   <id>.frame        the packed frame for the panel it was made on — a cache, for thumbnails
-///   <id>.src          the original picture, as picked (images only)
+///   <id>.src          the original picture, as picked (images, and tokens with a picture)
 /// ```
 ///
 /// Binaries are kept as raw files rather than base64 inside the index so the index stays small and
@@ -124,25 +124,32 @@ class DesignStore {
     return _add(directory, design);
   }
 
-  /// Saves an MTG token. Its fields go in the index; there's no source picture.
+  /// Saves an MTG token. Its fields go in the index; a picture in its art box, if it has one, is kept
+  /// as a source with its framing, exactly like an image's.
   Future<SavedDesign> saveToken({
     required String name,
     required String deviceId,
     required Uint8List frame,
     required TokenContent token,
+    Uint8List? source,
+    ImageSettings? settings,
   }) async {
+    assert((source == null) == (settings == null));
     final directory = await _ensureDirectory();
-    return _add(
-      directory,
-      SavedDesign(
-        id: _newId(),
-        name: name,
-        createdAt: DateTime.now(),
-        frame: frame,
-        deviceId: deviceId,
-        token: token,
-      ),
+    final design = SavedDesign(
+      id: _newId(),
+      name: name,
+      createdAt: DateTime.now(),
+      frame: frame,
+      deviceId: deviceId,
+      token: token,
+      settings: settings,
+      hasSource: source != null,
     );
+    if (source != null) {
+      await _sourceFile(directory, design.id).writeAsBytes(source, flush: true);
+    }
+    return _add(directory, design);
   }
 
   static String _newId() =>

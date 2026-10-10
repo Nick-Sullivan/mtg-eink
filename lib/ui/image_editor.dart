@@ -1,9 +1,7 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import '../render/image_content.dart';
-import '../render/quantiser.dart';
+import 'widgets/image_controls.dart';
 
 /// Controls for an imported image: picking one, framing it, and choosing how it's converted.
 class ImageEditor extends StatelessWidget {
@@ -42,24 +40,17 @@ class ImageEditor extends StatelessWidget {
         ),
         if (image != null) ...[
           const SizedBox(height: 8),
-          _ZoomRow(image: image, onChanged: onChanged),
-          const SizedBox(height: 4),
-          SegmentedButton<DitherStyle>(
-            segments: const [
-              ButtonSegment(value: DitherStyle.photo, label: Text('Photo')),
-              ButtonSegment(value: DitherStyle.graphic, label: Text('Graphic')),
-            ],
-            selected: {image.style},
-            onSelectionChanged: (s) =>
-                onChanged(image.copyWith(style: s.first)),
+          OrientationToggle(
+            landscape: image.landscape,
+            // Pan and zoom were measured on the other shape, so start the framing afresh — the same
+            // rule as switching panel.
+            onChanged: (landscape) =>
+                onChanged(image.reframed(landscape: landscape).recentred()),
           ),
           const SizedBox(height: 8),
-          Text(
-            image.style == DitherStyle.photo
-                ? 'Dithered across the panel’s inks. Best for photographs.'
-                : 'Flat nearest colour. Best for logos and flat art.',
-            style: const TextStyle(fontSize: 12, color: Colors.black54),
-          ),
+          ZoomRow(image: image, onChanged: onChanged),
+          const SizedBox(height: 4),
+          DitherStyleControl(image: image, onChanged: onChanged),
           const SizedBox(height: 4),
           const Text(
             'Drag to move, pinch to zoom. The preview shows the real inks.',
@@ -74,50 +65,6 @@ class ImageEditor extends StatelessWidget {
             label: const Text('Save to library'),
           ),
         ],
-      ],
-    );
-  }
-}
-
-/// Zoom, as a slider rather than only a pinch.
-///
-/// Pinching is fiddly on a preview this small. The scale is logarithmic: a linear one spends most
-/// of its travel on huge zooms nobody wants.
-class _ZoomRow extends StatelessWidget {
-  const _ZoomRow({required this.image, required this.onChanged});
-
-  static const _minExponent = -2.0;
-  static const _maxExponent = 3.0;
-
-  final ImageContent image;
-  final ValueChanged<ImageContent> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        const Icon(Icons.zoom_out, size: 20),
-        Expanded(
-          child: Slider(
-            value: (math.log(image.zoom) / math.ln2).clamp(
-              _minExponent,
-              _maxExponent,
-            ),
-            min: _minExponent,
-            max: _maxExponent,
-            onChanged: (v) =>
-                onChanged(image.zoomedTo(math.pow(2, v).toDouble())),
-          ),
-        ),
-        const Icon(Icons.zoom_in, size: 20),
-        const SizedBox(width: 8),
-        Tooltip(
-          message: 'Fit to frame',
-          child: IconButton.outlined(
-            onPressed: () => onChanged(image.recentred()),
-            icon: const Icon(Icons.fit_screen_outlined),
-          ),
-        ),
       ],
     );
   }

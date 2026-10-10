@@ -218,6 +218,41 @@ void main() {
       expect(design.frame.every((b) => b == 3), isTrue);
     });
 
+    test('a token with a picture keeps its source and framing', () async {
+      final saved = await store.saveToken(
+        name: 'Sap',
+        deviceId: device.id,
+        frame: frameOf(3),
+        token: token,
+        source: sourceOf('t'),
+        settings: _settings,
+      );
+      final design = (await store.load()).single;
+
+      expect(design.kind, DesignKind.token);
+      expect(design.token, token);
+      expect(design.hasSource, isTrue);
+      expect(design.settings!.offset, const Offset(-12.5, 40));
+      expect(design.settings!.scale, 2.25);
+      expect(await store.readSource(saved.id), sourceOf('t'));
+    });
+
+    test('deleting a token with a picture removes its source too', () async {
+      final saved = await store.saveToken(
+        name: 'Sap',
+        deviceId: device.id,
+        frame: frameOf(3),
+        token: token,
+        source: sourceOf('t'),
+        settings: _settings,
+      );
+      await store.delete(saved.id);
+      expect(
+        root.listSync(recursive: true).where((f) => f.path.contains(saved.id)),
+        isEmpty,
+      );
+    });
+
     test('tokens and images share one library, newest first', () async {
       await save('Photo');
       await store.saveToken(

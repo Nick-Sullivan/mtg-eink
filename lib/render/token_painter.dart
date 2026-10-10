@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -7,6 +8,8 @@ import '../models/creature_art.dart';
 import '../models/panel_device.dart';
 import '../models/token_content.dart';
 import 'canvas_painter.dart';
+import 'frame_packer.dart';
+import 'image_content.dart';
 
 /// Where each part of the card sits, in panel coordinates.
 ///
@@ -68,6 +71,18 @@ class TokenLayout {
 
   final Rect title;
   final Rect art;
+
+  /// [art] shrunk to whole pixels, for a picture.
+  ///
+  /// The layout is fractional on any panel but the reference one, and a quantised picture has to
+  /// land pixel for pixel — half a pixel off and every edge pixel is resampled between inks.
+  Rect get artPixels => Rect.fromLTRB(
+    art.left.ceilToDouble(),
+    art.top.ceilToDouble(),
+    art.right.floorToDouble(),
+    art.bottom.floorToDouble(),
+  );
+
   final Rect type;
 
   /// Null when the token has no ability text.
@@ -76,12 +91,27 @@ class TokenLayout {
   final Rect pt;
 }
 
+/// The layout [token] gets on [device].
+TokenLayout tokenLayoutFor(PanelDevice device, TokenContent token) =>
+    TokenLayout(device, hasAbility: token.ability.trim().isNotEmpty);
+
+/// The frame a picture in [token]'s art box is framed in. It changes with the ability text.
+Size tokenArtBox(PanelDevice device, TokenContent token) =>
+    tokenLayoutFor(device, token).artPixels.size;
+
 /// Draws [token] on the card template, in panel coordinates.
-void paintToken(Canvas canvas, PanelDevice device, TokenContent token) {
-  final layout = TokenLayout(
-    device,
-    hasAbility: token.ability.trim().isNotEmpty,
-  );
+///
+/// With [picture], the art box shows that instead of the preset creature: [pictureInks] if given —
+/// the picture already quantised, from [renderImagePreview] — otherwise the source itself, for
+/// while that's still being worked out.
+void paintToken(
+  Canvas canvas,
+  PanelDevice device,
+  TokenContent token, {
+  ImageContent? picture,
+  ui.Image? pictureInks,
+}) {
+  final layout = tokenLayoutFor(device, token);
   final u = layout.unit;
   final ink = device.foreground;
   final paper = device.background;
@@ -107,11 +137,27 @@ void paintToken(Canvas canvas, PanelDevice device, TokenContent token) {
     canvas.drawRRect(RRect.fromRectAndRadius(box, radius), paperFill);
   }
 
-  // The art box: the chosen creature, or with none chosen a sparse diagonal hatch, so it still
-  // reads as a picture area rather than a blank.
+  // The art box: a picture, the chosen creature, or with neither a sparse diagonal hatch, so it
+  // still reads as a picture area rather than a blank.
   canvas.drawRect(layout.art, paperFill);
   final art = layout.art;
-  if (CreatureArt.byId(token.art) case final creature?) {
+  if (picture != null) {
+    final box = layout.artPixels;
+    if (pictureInks != null) {
+      canvas.drawImageRect(
+        pictureInks,
+        Offset.zero &
+            Size(pictureInks.width.toDouble(), pictureInks.height.toDouble()),
+        box,
+        Paint()..filterQuality = FilterQuality.none,
+      );
+    } else {
+      canvas.save();
+      canvas.translate(box.left, box.top);
+      paintImageContent(canvas, picture);
+      canvas.restore();
+    }
+  } else if (CreatureArt.byId(token.art) case final creature?) {
     paintCreatureArt(canvas, creature, art.deflate(6 * u), ink);
   } else {
     canvas.save();
@@ -294,6 +340,39 @@ void _paintWrapped(
   painter.dispose();
 }
 
-/// Renders [token] to the device's frame and packs it.
-Future<Uint8List> renderTokenFrame(PanelDevice device, TokenContent token) =>
-    renderPainted(device, (canvas) => paintToken(canvas, device, token));
+/// Renders [token] to the device's frame and packs it, with [picture] in the art box if given.
+///
+/// The card is flat art and is packed flat; a picture is quantised separately, in its own style and
+/// on its own pixels, and laid over the art box afterwards. Dithering the whole card instead would
+/// speckle every edge of the text, and the card's paper would throw off the picture's levels.
+Future<Uint8List> renderTokenFrame(
+  PanelDevice device,
+  TokenContent token, {
+  ImageContent? picture,
+}) async {
+  if (picture == null) {
+    return renderPainted(device, (canvas) => paintToken(canvas, device, token));
+  }
+
+  final box = tokenLayoutFor(device, token).artPixels;
+  // The caller keeps the picture framed to the box, but a stale one is still drawn in the right
+  // place rather than smeared across the card.
+  final fitted = picture.box == box.size && picture.device == device
+      ? picture
+      : picture.reframed(device: device, box: () => box.size);
+  // The card pass draws the picture too, though it's about to be replaced: that keeps the art box's
+  // fractional edges paper, rather than slivers of the hatch.
+  final frame = await renderPainted(
+    device,
+    (canvas) => paintToken(canvas, device, token, picture: fitted),
+  );
+  overlayCodes(
+    device,
+    frame,
+    await renderImageCodes(fitted),
+    box.width.round(),
+    left: box.left.round(),
+    top: box.top.round(),
+  );
+  return frame;
+}

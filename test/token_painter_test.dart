@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
+import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mtg_eink/models/panel_device.dart';
 import 'package:mtg_eink/models/token_content.dart';
+import 'package:mtg_eink/render/image_content.dart';
 import 'package:mtg_eink/render/quantiser.dart';
 import 'package:mtg_eink/render/token_painter.dart';
 
@@ -166,6 +170,106 @@ void main() {
         const TokenContent(art: 'mind-flayer'),
       );
       expect(unknown, hatched);
+    });
+  });
+
+  group('a picture in the art box', () {
+    /// A solid picture of one colour, as if picked from the gallery.
+    Future<ImageContent> solid(PanelDevice device, Color colour) async {
+      const size = 16;
+      final rgba = Uint8List(size * size * 4);
+      for (var p = 0; p < size * size; p++) {
+        rgba[p * 4] = (colour.r * 255).round();
+        rgba[p * 4 + 1] = (colour.g * 255).round();
+        rgba[p * 4 + 2] = (colour.b * 255).round();
+        rgba[p * 4 + 3] = 255;
+      }
+      final completer = Completer<ui.Image>();
+      ui.decodeImageFromPixels(
+        rgba,
+        size,
+        size,
+        ui.PixelFormat.rgba8888,
+        completer.complete,
+      );
+      return ImageContent(
+        device: device,
+        source: await completer.future,
+        bytes: Uint8List(0),
+        style: DitherStyle.graphic,
+        box: tokenArtBox(device, const TokenContent()),
+      ).recentred();
+    }
+
+    for (final panel in PanelDevice.supported) {
+      test('${panel.name}: the art box snaps inward to whole pixels', () {
+        for (final hasAbility in [false, true]) {
+          final layout = TokenLayout(panel, hasAbility: hasAbility);
+          final box = layout.artPixels;
+          for (final edge in [box.left, box.top, box.right, box.bottom]) {
+            expect(edge, edge.roundToDouble());
+          }
+          expect(layout.art.contains(box.topLeft), isTrue);
+          expect(box.right, lessThanOrEqualTo(layout.art.right));
+          expect(box.bottom, lessThanOrEqualTo(layout.art.bottom));
+        }
+      });
+
+      testWidgets('${panel.name}: fills the box, and only the box', (
+        tester,
+      ) async {
+        // Red where the panel has it; otherwise the pen ink.
+        final ink = panel.palette.length > 2 ? 3 : panel.foregroundCode;
+        final frame = (await tester.runAsync(() async {
+          final picture = await solid(panel, panel.palette[ink]);
+          return renderTokenFrame(
+            panel,
+            const TokenContent(),
+            picture: picture,
+          );
+        }))!;
+        final layout = TokenLayout(panel);
+        final box = layout.artPixels;
+
+        // Every pixel of the box is the picture — no hatch shows through.
+        for (var v = box.top.round(); v < box.bottom.round(); v++) {
+          for (var u = box.left.round(); u < box.right.round(); u++) {
+            expect(codeAtCanvas(panel, frame, u, v), ink);
+          }
+        }
+        // The card around it is untouched: the title bar is still paper.
+        expect(
+          codeAtCanvas(
+            panel,
+            frame,
+            (layout.title.left + 2 * layout.unit).floor(),
+            layout.title.center.dy.floor(),
+          ),
+          panel.backgroundCode,
+        );
+      });
+    }
+
+    testWidgets('a picture framed for a stale box is refitted, not smeared', (
+      tester,
+    ) async {
+      // Framed for a card without ability text; rendered for one with it, whose art box is
+      // shorter. Nothing may spill into the ability box below.
+      const token = TokenContent(ability: 'Flying');
+      final frame = (await tester.runAsync(() async {
+        final picture = await solid(device, device.palette[3]);
+        return renderTokenFrame(device, token, picture: picture);
+      }))!;
+      final ability = TokenLayout(device, hasAbility: true).ability!;
+      expect(
+        codeAtCanvas(
+          device,
+          frame,
+          (ability.left + 2).ceil(),
+          (ability.top + 2).ceil(),
+        ),
+        device.backgroundCode,
+      );
     });
   });
 }

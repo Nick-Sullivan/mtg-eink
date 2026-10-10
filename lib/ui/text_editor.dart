@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/panel_device.dart';
 import '../render/canvas_painter.dart';
+import 'widgets/image_controls.dart';
 import 'widgets/palette_picker.dart';
 
 /// Controls for composing text: what it says, how big, and in which inks.
@@ -37,6 +38,11 @@ class TextEditor extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
+        OrientationToggle(
+          landscape: content.landscape,
+          onChanged: (v) => onChanged(content.copyWith(landscape: v)),
+        ),
+        const SizedBox(height: 8),
 
         Row(
           children: [

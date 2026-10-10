@@ -89,6 +89,13 @@ class PanelDevice {
   /// The canvas in logical pixels, for drawing.
   Size get size => Size(canvasWidth.toDouble(), canvasHeight.toDouble());
 
+  /// The drawing surface for a design: [size], or turned on its side when [landscape].
+  ///
+  /// Orientation belongs to the design, not the panel, so it's a parameter rather than a field. A
+  /// landscape drawing is turned upright by the packer — see `packCodes`.
+  Size canvasSizeFor({required bool landscape}) =>
+      landscape ? Size(size.height, size.width) : size;
+
   /// Where canvas pixel ([u], [v]) lives in the frame.
   ({int x, int y}) framePoint(int u, int v) =>
       frameQuarterTurns == 0 ? (x: u, y: v) : (x: pixelsPerRow - 1 - v, y: u);

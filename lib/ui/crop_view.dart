@@ -45,16 +45,11 @@ class _CropViewState extends State<CropView> {
   Offset _startFocal = Offset.zero;
 
   Size get _viewport => Size(
-    widget.content.device.size.width + _margin * 2,
-    widget.content.device.size.height + _margin * 2,
+    widget.content.frame.width + _margin * 2,
+    widget.content.frame.height + _margin * 2,
   );
 
-  Rect get _frameRect => Rect.fromLTWH(
-    _margin,
-    _margin,
-    widget.content.device.size.width,
-    widget.content.device.size.height,
-  );
+  Rect get _frameRect => Offset(_margin, _margin) & widget.content.frame;
 
   @override
   void initState() {
@@ -162,14 +157,19 @@ class _CropViewState extends State<CropView> {
   }
 }
 
-/// A scale recognizer that never loses the gesture arena.
+/// A scale recognizer that claims every pointer the moment it lands.
 ///
-/// Inside a scrolling list the default behaviour is for the list's vertical drag recognizer to win,
-/// which makes the image pannable sideways only. Accepting instead of rejecting keeps the gesture
-/// here. Dragging anywhere else on the page still scrolls normally.
+/// Inside a scrolling list the list's vertical drag recognizer would otherwise win — it crosses its
+/// slop before a scale does — and the image could only be panned sideways. An earlier version
+/// answered that by treating rejection as acceptance, but then the list *also* won, so pinching
+/// the picture scrolled the page under it. Claiming the pointer on contact makes the list genuinely
+/// lose. Dragging anywhere else on the page still scrolls normally.
 class _EagerScaleRecognizer extends ScaleGestureRecognizer {
   @override
-  void rejectGesture(int pointer) => acceptGesture(pointer);
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    resolvePointer(event.pointer, GestureDisposition.accepted);
+  }
 }
 
 class _CropPainter extends CustomPainter {

@@ -95,8 +95,34 @@ class Quantiser {
     DitherStyle style,
   ) {
     final width = device.canvasWidth;
-    final height = device.canvasHeight;
+    final codes = quantiseToCodes(
+      device,
+      rgba,
+      width,
+      device.canvasHeight,
+      style,
+    );
+    final frame = Uint8List(device.packedBytes);
+    for (var p = 0; p < codes.length; p++) {
+      setCanvasPixel(device, frame, p % width, p ~/ width, codes[p]);
+    }
+    return frame;
+  }
+
+  /// Converts an RGBA buffer of any size into one ink code per pixel, row by row.
+  ///
+  /// For a picture that fills only part of a design — a token's art box. Quantising it on its own
+  /// matters for photographs: [_autoLevels] looks at every pixel it's given, and a card's worth of
+  /// white paper around the picture would stop it stretching the picture's own highlights.
+  static Uint8List quantiseToCodes(
+    PanelDevice device,
+    Uint8List rgba,
+    int width,
+    int height,
+    DitherStyle style,
+  ) {
     final count = width * height;
+    assert(rgba.length == count * 4);
 
     final l = Float32List(count);
     final a = Float32List(count);
@@ -115,31 +141,21 @@ class Quantiser {
     _gateChroma(inks, a, b);
 
     return style == DitherStyle.photo
-        ? _diffuse(device, inks, l, a, b)
-        : _flat(device, inks, l, a, b);
+        ? _diffuse(width, height, inks, l, a, b)
+        : _flat(inks, l, a, b);
   }
 
   static Uint8List _flat(
-    PanelDevice device,
     List<_Ink> inks,
     Float32List l,
     Float32List a,
     Float32List b,
   ) {
-    final frame = Uint8List(device.packedBytes);
-    for (var y = 0; y < device.canvasHeight; y++) {
-      for (var x = 0; x < device.canvasWidth; x++) {
-        final p = y * device.canvasWidth + x;
-        setCanvasPixel(
-          device,
-          frame,
-          x,
-          y,
-          _nearestInk(inks, l[p], a[p], b[p]).code,
-        );
-      }
+    final codes = Uint8List(l.length);
+    for (var p = 0; p < codes.length; p++) {
+      codes[p] = _nearestInk(inks, l[p], a[p], b[p]).code;
     }
-    return frame;
+    return codes;
   }
 
   /// Atkinson error diffusion, serpentine.
@@ -161,15 +177,14 @@ class Quantiser {
   /// Scanning alternates direction per row. At 128 pixels wide a single-direction scan never lets
   /// the error trail decorrelate, and the result is pronounced diagonal "worming".
   static Uint8List _diffuse(
-    PanelDevice device,
+    int width,
+    int height,
     List<_Ink> inks,
     Float32List l,
     Float32List a,
     Float32List b,
   ) {
-    final width = device.canvasWidth;
-    final height = device.canvasHeight;
-    final frame = Uint8List(device.packedBytes);
+    final codes = Uint8List(width * height);
 
     const taps = [
       [1, 0],
@@ -187,7 +202,7 @@ class Quantiser {
         final p = y * width + x;
 
         final ink = _nearestInk(inks, l[p], a[p], b[p]);
-        setCanvasPixel(device, frame, x, y, ink.code);
+        codes[p] = ink.code;
 
         // Clamping keeps a pathological pixel from poisoning its neighbourhood. With four levels
         // the raw error is already large; an unclamped runaway shows up as a bright smear.
@@ -206,7 +221,7 @@ class Quantiser {
         }
       }
     }
-    return frame;
+    return codes;
   }
 
   /// The ink closest to a colour, with chroma error weighted. See [_chromaWeight].
@@ -394,4 +409,17 @@ void setCanvasPixel(
 int codeAtCanvas(PanelDevice device, Uint8List frame, int u, int v) {
   final point = device.framePoint(u, v);
   return codeAt(device, frame, point.x, point.y);
+}
+
+/// Where pixel ([x], [y]) of a landscape drawing lands on the portrait canvas.
+///
+/// The drawing is turned a quarter turn clockwise: its top row runs down the canvas's right edge.
+/// There's only the one direction — turning the panel round gives the other.
+({int u, int v}) landscapeToCanvas(PanelDevice device, int x, int y) =>
+    (u: device.canvasWidth - 1 - y, v: x);
+
+/// Reads the ink code at pixel ([x], [y]) of a landscape drawing.
+int codeAtLandscape(PanelDevice device, Uint8List frame, int x, int y) {
+  final point = landscapeToCanvas(device, x, y);
+  return codeAtCanvas(device, frame, point.u, point.v);
 }

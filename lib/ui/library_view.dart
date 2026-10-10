@@ -47,6 +47,11 @@ class LibraryView extends StatelessWidget {
         final design = designs[index];
         // Each frame is packed for the panel it was made on, so decode it as that panel.
         final madeFor = PanelDevice.byId(design.deviceId);
+        // A token's settings describe its art, which is never landscape; the card itself isn't.
+        final landscape =
+            design.kind == DesignKind.image &&
+            (design.settings?.landscape ?? false);
+        final shape = madeFor.canvasSizeFor(landscape: landscape);
 
         return ListTile(
           leading: SizedBox(
@@ -54,8 +59,12 @@ class LibraryView extends StatelessWidget {
             height: 78,
             child: Center(
               child: AspectRatio(
-                aspectRatio: madeFor.size.width / madeFor.size.height,
-                child: FrameThumbnail(device: madeFor, frame: design.frame),
+                aspectRatio: shape.width / shape.height,
+                child: FrameThumbnail(
+                  device: madeFor,
+                  frame: design.frame,
+                  landscape: landscape,
+                ),
               ),
             ),
           ),
@@ -104,10 +113,18 @@ class LibraryView extends StatelessWidget {
 /// Decoding is async, so the image is built once and held. [FilterQuality.none] matters: smoothing
 /// a dithered frame turns it to mush and makes the thumbnail misrepresent the panel.
 class FrameThumbnail extends StatefulWidget {
-  const FrameThumbnail({required this.device, required this.frame, super.key});
+  const FrameThumbnail({
+    required this.device,
+    required this.frame,
+    this.landscape = false,
+    super.key,
+  });
 
   final PanelDevice device;
   final Uint8List frame;
+
+  /// Shown on its side, the way it was drawn.
+  final bool landscape;
 
   @override
   State<FrameThumbnail> createState() => _FrameThumbnailState();
@@ -125,7 +142,9 @@ class _FrameThumbnailState extends State<FrameThumbnail> {
   @override
   void didUpdateWidget(FrameThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.frame != widget.frame || oldWidget.device != widget.device) {
+    if (oldWidget.frame != widget.frame ||
+        oldWidget.device != widget.device ||
+        oldWidget.landscape != widget.landscape) {
       _decode();
     }
   }
@@ -137,7 +156,11 @@ class _FrameThumbnailState extends State<FrameThumbnail> {
   }
 
   Future<void> _decode() async {
-    final image = await decodeFrame(widget.device, widget.frame);
+    final image = await decodeFrame(
+      widget.device,
+      widget.frame,
+      landscape: widget.landscape,
+    );
     if (!mounted) {
       image.dispose();
       return;
@@ -175,7 +198,7 @@ class _ThumbnailPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     canvas.drawImageRect(
       image,
-      Rect.fromLTWH(0, 0, device.size.width, device.size.height),
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
       Rect.fromLTWH(0, 0, size.width, size.height),
       Paint()..filterQuality = FilterQuality.none,
     );
