@@ -5,6 +5,91 @@ The milestone checklists live in [`docs/PLAN.md`](docs/PLAN.md); tick them there
 
 ## Status
 
+**Second panel: the 4.2" (Rev2.2) writes from the app.** 2026-10-10. Black and white, 400x300,
+composed portrait. It turned out to be a *third* protocol — not the old `0xCD` one the plan
+expected — recovered from Waveshare's `NFCTag_EN.apk` and confirmed step by step with the new
+Diagnostics page (Settings → Diagnostics). Details in `docs/protocol.md`, open items in M9 of
+`docs/PLAN.md`. Sceptical points:
+
+- **Reliability: root cause found and fixed, 2026-10-10.** The 4.2" is fine; **the app was
+  degrading the phone's NFC.** Builds from that day turned the field off and on (`disableReaderMode`
+  → `setDiscoveryTechnology(READER_DISABLE)` → back on) whenever the panel was "lost" — and the
+  monitor wrongly declared it lost after *every* write. Each reset left the Pixel's NFC weaker, until
+  no spot could power the refresh; only switching NFC off and on in settings cleared it. With the
+  resets removed: **16 of 16 refreshes ran**, in spots that had failed all morning. All field-reset
+  code is gone (see the comment where `restartDiscovery` used to be in `MainActivity.kt`).
+- **Not yet re-measured** without the resets: how much placement still matters, and whether this
+  morning's "only some spots work" was partly the same degradation (some reset-like code existed
+  before then too — `setDiscoveryTechnology` after `enableReaderMode`, also removed).
+- **How a 4.2" write works now:** Send → "Checking this spot…" — a refresh with no image, judged
+  busy at 1.45 s (`Rev22Protocol.probe`, ~2.4 s). Good → upload + real refresh (~5 s) → **two
+  buzzes**. Bad → **one buzz**, "lift the panel away and bring it back", stays armed. Nick's spec:
+  never say "move"/"slide"; hold it ~1 cm off the phone.
+
+### Hard-won facts about the 4.2" (each cost real hardware time)
+
+- **The sticky state was on the phone, caused by the app's field resets** (now removed). Before
+  that was found: Over 174 attempts a refresh
+  after a success ran 73% of the time, after a failure 8% — across lifts, field resets, and even a
+  minute with the panel away. Twice, turning NFC off and on in quick settings (~11:23 and ~12:10)
+  made the very next write work at once. Best explanation: the NFC controller's dynamic power
+  control turning the field down when the big panel coil loads the antenna, and staying down until
+  the controller is reset. It fits "1 cm away beats flat", too. Apps can't set this, or toggle NFC,
+  and Nick ruled out asking users to (rightly). **Next: find what triggers it and stop doing it.** Found: the field resets. Removed.
+  Suspects: failed refreshes themselves (which the probe provokes on purpose), or the app's field
+  resets (`restartDiscovery`). A 5 s field-off did not clear it (tried, removed).
+- **Only a fresh power-up rescues a failed refresh.** In-session retries — refresh alone, after a
+  controller reset, other waveforms (`1A` = 19/32/6E), `F7`, slow resets, resting — never once worked.
+  Lifting the panel away and back always has.
+- **The image survives a controller reset** (`74 97` pulses) within a session, so a re-refresh
+  needs reset + setup, not a re-upload.
+- **A bad spot looks identical to a good one for the first ~1 s** of a refresh: it starts, then dies
+  once the panel's stored energy runs out — sometimes before 1.0 s, once between 1.1 and 1.6 s.
+  So there is **no early check**: the probe has to run ~1.45 s. Good refreshes last 1.6–1.9 s.
+- **Rapid polling (every 100 ms) cuts any refresh off at ~0.5 s.** Single polls at 0.4/0.7/1.0 s are
+  harmless. The vendor's "1 s quiet, then every 250 ms" is safe.
+- **A booster power-up probe (`22 C0`/`20`) does not discriminate** — ~100 ms busy everywhere.
+- **The bridge can't read controller registers** (`74 9B 00 0E/0D` → `6581`). Only `74 9B 00 0F`
+  (the busy pin) reads.
+- **Android: no API for field strength or transmit power.** `setDiscoveryTechnology` and
+  `enableReaderMode` are mutually exclusive (AOSP `NfcActivityManager`): the former throws while
+  reader mode is on — *after* recording the tech, which makes the next `enableReaderMode` throw.
+  The app no longer calls either beyond plain `enableReaderMode`/`disableReaderMode` in
+  `onResume`/`onPause` — and must not: toggling the field degraded the phone's NFC (above).
+- **A panel that loses its link while still near the phone can go deaf** until it loses power (the
+  60 s presence check keeps Android holding the old tag). **Do not fix this with a field reset** —
+  that is what wrecked the phone's NFC. Lifting the panel away cures it, and the app says so.
+- **Haptics:** Flutter's `HapticFeedback` plays only a faint 50 ms system tick. The app uses the
+  vibrator directly (`ApduChannel.buzz`, needs `VIBRATE`). Vibrations from a paused activity are
+  dropped (`ignored_background`).
+- Probe scripts used today live only in the session scratchpad; the useful ones are easy to
+  regenerate from `docs/protocol.md`. `adb logcat -G 16M` on the phone, or full writes roll the log.
+
+### How the 4.2" was worked out
+
+Each step proved one thing on the panel before the next built on it:
+
+1. Logged the tag at discovery — both panels IsoDep, identical except the ATS.
+2. The (G) preamble: `6D00` ("instruction not supported") to every (G) command.
+3. Decompiled `NFCTag_EN.apk`; its IsoDep path is CLA `0x74` register writes to the controller.
+4. Auth → password → reset → setup, each `9000`. Then an all-`00` frame (panel already white, so no
+   visible change) and an all-`FF` frame (went black): **1 = black**.
+5. A probe frame with bars on row 0 and column 0, photographed: **frame = portrait canvas turned a
+   quarter turn clockwise, MSB leftmost.**
+6. In the app, two refresh failures, separated by A/B tests against the probe:
+   polling during the first second **cuts the refresh short** (keep quiet for 1 s, as the vendor
+   does); and refreshes that **never start** at random, independent of frame and app.
+
+Tooling that made this cheap: **wireless adb** (Windows didn't see the phone over USB), probe
+scripts pushed to `/sdcard/Android/data/com.nicksullivan.mtg_eink.dev/files/probe.txt`, and
+`adb logcat -G 16M` — at the default 256 KiB, a few full writes' hex rolled the log over before it
+could be read.
+
+Debug builds now install as **`com.nicksullivan.mtg_eink.dev`** ("mtg-eink dev") alongside the
+Play Store app: a locally signed build can never update the Play-signed one.
+
+### The 2.9" (G)
+
 **The app works.** 2026-09-25. Compose text in four colours on the phone, hold it to the panel,
 and the image appears and stays there. No vendor code in the path: protocol and pixel packing are
 pure Dart, Kotlin only owns reader mode and carries bytes.
@@ -258,6 +343,10 @@ than trusting either reading.
   before writing the Kotlin shim, and record what you find here.
 
 ## Log
+
+- **2026-10-10** — Added the Waveshare 4.2" (Rev2.2) black-and-white panel; see Status. New:
+  Diagnostics page, `Rev22Protocol`, canvas/frame coordinates and ATS detection on `PanelDevice`,
+  per-panel saved designs, `.dev` debug application ID.
 
 - **2026-09-26** — Renamed to **mtg-eink** (`com.nicksullivan.mtg_eink`, installs as a new app; logcat
   tag `mtgeink`), new adaptive launcher icon, and an MTG token tab (see M8 in the plan).

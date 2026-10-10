@@ -52,12 +52,21 @@ class WriteOverlay extends StatelessWidget {
   const WriteOverlay({
     required this.writing,
     required this.percent,
+    required this.holdFor,
     required this.onCancel,
+    this.notice,
     super.key,
   });
 
   final bool writing;
   final int percent;
+
+  /// How long a write takes on this panel, to tell you how long to hold still.
+  final Duration holdFor;
+
+  /// Coaching: shown mid-write when the panel needs moving, or while waiting to explain a retry.
+  final String? notice;
+
   final VoidCallback onCancel;
 
   @override
@@ -110,16 +119,18 @@ class WriteOverlay extends StatelessWidget {
       children: [
         Icon(Icons.nfc, size: 64, color: Colors.amber.shade800),
         const SizedBox(height: 16),
+        if (notice case final notice?) ...[
+          Text(
+            notice,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.red.shade800),
+          ),
+          const SizedBox(height: 12),
+        ],
         Text(
-          'Hold the panel to the phone',
+          'Hold the panel a cm from the phone',
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.titleLarge,
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'A small gap works better than pressing flat.',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontStyle: FontStyle.italic),
         ),
         const SizedBox(height: 20),
         OutlinedButton(onPressed: onCancel, child: const Text('Cancel')),
@@ -146,11 +157,19 @@ class WriteOverlay extends StatelessWidget {
         ),
         const SizedBox(height: 20),
         Text('Writing…', style: Theme.of(context).textTheme.titleMedium),
+        if (notice case final notice?) ...[
+          const SizedBox(height: 8),
+          Text(
+            notice,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.orange.shade900),
+          ),
+        ],
         const SizedBox(height: 4),
-        const Text(
-          'Hold still — about 25 seconds.',
+        Text(
+          'Hold still — about ${holdFor.inSeconds} seconds.',
           textAlign: TextAlign.center,
-          style: TextStyle(fontStyle: FontStyle.italic),
+          style: const TextStyle(fontStyle: FontStyle.italic),
         ),
       ],
     );

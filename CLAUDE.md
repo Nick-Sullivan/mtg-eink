@@ -1,7 +1,8 @@
 # mtg-eink
 
-Flutter/Android app to push text and simple shapes to a **Waveshare 2.9" passive NFC-powered
-e-Paper (G)** — 296x128, **four colours: black, white, red, yellow** — from a Pixel phone.
+Flutter/Android app to push text and simple shapes to Waveshare passive NFC-powered e-Paper from a
+Pixel phone. Two panels: the **2.9" (G)** — 296x128, **four colours: black, white, red, yellow** —
+and the **4.2" Rev2.2** — 400x300, black and white. The app tells them apart by their ATS.
 
 ## Read these first
 
@@ -12,7 +13,9 @@ e-Paper (G)** — 296x128, **four colours: black, white, red, yellow** — from 
 
 ## Things that will bite you if you don't know them
 
-- **There are two incompatible protocols in this product family, and ours is the less obvious one.**
+- **There are three incompatible protocols in this product family, and we use the two less obvious
+  ones.** The 4.2" Rev2.2 has its own (CLA `0x74`, controller register writes); see
+  `docs/protocol.md`. What follows is about the 2.9" (G).
   Waveshare's published `NFC.jar`, their Android SDK wiki page, and every third-party project
   (joshuatz, mk-fg, DevPika) target the **monochrome / 3-colour** panels, which use raw `0xCD`
   frames over `NfcA`. **Our (G) panel answers `6700` to all of it.** It is an ISO 14443-4 device
@@ -25,6 +28,10 @@ e-Paper (G)** — 296x128, **four colours: black, white, red, yellow** — from 
   At 5000 ms the session died at *exactly* 5.0 s, repeatably — it is the platform invalidating the
   tag handle on a cadence we choose, surfacing as `SecurityException: Tag is out of date`, not an
   `IOException`. It is now 60 s and must always exceed a full write.
+- **Never cycle the field: no `disableReaderMode`/`enableReaderMode` toggling and no
+  `setDiscoveryTechnology` outside `onResume`/`onPause`.** On 2026-10-10 an automatic "field reset"
+  left the Pixel's NFC too weak to refresh the 4.2" anywhere until NFC was switched off and on in
+  settings — it looked exactly like a flaky panel, and cost most of a day. Without it, 16/16 writes.
 - **There is no Android API to control NFC transmit power.** What we control is how the field is
   used: reader mode with that delay, `FLAG_READER_SKIP_NDEF_CHECK`, and `setDiscoveryTechnology` on
   API 35+. Use reader mode, **never** foreground dispatch.
@@ -54,8 +61,10 @@ sequence works anyway.
 - **Panel specifics live in `PanelDevice`** (`lib/models/panel_device.dart`) — geometry, palette,
   block size, refresh timing. Nothing else hardcodes a dimension or a colour. Everything downstream
   takes a `PanelDevice` parameter, so adding a second panel is an entry in `PanelDevice.supported`
-  rather than a hunt through the renderer. Only one is supported today: the 2.9" (G).
-- **Protocol knowledge lives in `lib/nfc/gseries_protocol.dart`.** Kotlin owns the radio and
+  rather than a hunt through the renderer. Two today: the 2.9" (G) and the 4.2" Rev2.2. Drawing
+  happens on a portrait **canvas**; only the packer maps it onto the controller's **frame**.
+- **Protocol knowledge lives in `lib/nfc/gseries_protocol.dart` and `lib/nfc/rev22_protocol.dart`**,
+  chosen by `lib/nfc/panel_writer.dart`. Kotlin owns the radio and
   nothing else — it is a dumb `transceive` pipe, because reader mode and the presence-check delay
   can't be set from Dart and `nfc_manager` insists on owning reader mode itself.
 - Commit at each milestone boundary so sessions have clean resume points.

@@ -88,14 +88,14 @@ class Quantiser {
     });
   }
 
-  /// Converts an RGBA buffer of the device's frame size into a packed frame.
+  /// Converts an RGBA buffer of the device's canvas size into a packed frame.
   static Uint8List quantiseToFrame(
     PanelDevice device,
     Uint8List rgba,
     DitherStyle style,
   ) {
-    final width = device.pixelsPerRow;
-    final height = device.frameRows;
+    final width = device.canvasWidth;
+    final height = device.canvasHeight;
     final count = width * height;
 
     final l = Float32List(count);
@@ -127,10 +127,16 @@ class Quantiser {
     Float32List b,
   ) {
     final frame = Uint8List(device.packedBytes);
-    for (var y = 0; y < device.frameRows; y++) {
-      for (var x = 0; x < device.pixelsPerRow; x++) {
-        final p = y * device.pixelsPerRow + x;
-        setPixel(device, frame, x, y, _nearestInk(inks, l[p], a[p], b[p]).code);
+    for (var y = 0; y < device.canvasHeight; y++) {
+      for (var x = 0; x < device.canvasWidth; x++) {
+        final p = y * device.canvasWidth + x;
+        setCanvasPixel(
+          device,
+          frame,
+          x,
+          y,
+          _nearestInk(inks, l[p], a[p], b[p]).code,
+        );
       }
     }
     return frame;
@@ -150,6 +156,8 @@ class Quantiser {
   ///        1            (each 1/8 of the error)
   /// ```
   ///
+  /// Runs in canvas coordinates, so the scan follows the picture rather than the controller.
+  ///
   /// Scanning alternates direction per row. At 128 pixels wide a single-direction scan never lets
   /// the error trail decorrelate, and the result is pronounced diagonal "worming".
   static Uint8List _diffuse(
@@ -159,8 +167,8 @@ class Quantiser {
     Float32List a,
     Float32List b,
   ) {
-    final width = device.pixelsPerRow;
-    final height = device.frameRows;
+    final width = device.canvasWidth;
+    final height = device.canvasHeight;
     final frame = Uint8List(device.packedBytes);
 
     const taps = [
@@ -179,7 +187,7 @@ class Quantiser {
         final p = y * width + x;
 
         final ink = _nearestInk(inks, l[p], a[p], b[p]);
-        setPixel(device, frame, x, y, ink.code);
+        setCanvasPixel(device, frame, x, y, ink.code);
 
         // Clamping keeps a pathological pixel from poisoning its neighbourhood. With four levels
         // the raw error is already large; an unclamped runaway shows up as a bright smear.
@@ -364,4 +372,26 @@ void setPixel(PanelDevice device, Uint8List frame, int x, int y, int code) {
   final mask = (1 << device.bitsPerPixel) - 1;
   frame[index] =
       (frame[index] & ~(mask << shift) & 0xFF) | ((code & mask) << shift);
+}
+
+/// Writes an ink [code] at canvas pixel ([u], [v]) — where the picture puts it, not where the
+/// controller stores it. See [PanelDevice.framePoint].
+void setCanvasPixel(
+  PanelDevice device,
+  Uint8List frame,
+  int u,
+  int v,
+  int code,
+) {
+  if (u < 0 || u >= device.canvasWidth || v < 0 || v >= device.canvasHeight) {
+    return;
+  }
+  final point = device.framePoint(u, v);
+  setPixel(device, frame, point.x, point.y, code);
+}
+
+/// Reads the ink code at canvas pixel ([u], [v]). The inverse of [setCanvasPixel].
+int codeAtCanvas(PanelDevice device, Uint8List frame, int u, int v) {
+  final point = device.framePoint(u, v);
+  return codeAt(device, frame, point.x, point.y);
 }

@@ -197,4 +197,75 @@ void main() {
       }
     });
   });
+
+  group('a two-ink panel', () {
+    // The 4.2" has only black and white. The chroma gate's monochrome branch flattens every hue to
+    // grey; these check that lands sensibly rather than producing NaN or a blank frame.
+    const big = PanelDevice.waveshare42;
+
+    Uint8List flatBig(int r, int g, int b) {
+      final rgba = Uint8List(big.canvasWidth * big.canvasHeight * 4);
+      for (var i = 0; i < rgba.length; i += 4) {
+        rgba
+          ..[i] = r
+          ..[i + 1] = g
+          ..[i + 2] = b
+          ..[i + 3] = 255;
+      }
+      return rgba;
+    }
+
+    int blackPixels(Uint8List frame) {
+      var count = 0;
+      for (final byte in frame) {
+        for (var bit = 0; bit < 8; bit++) {
+          count += (byte >> bit) & 1;
+        }
+      }
+      return count;
+    }
+
+    final totalBig = big.canvasWidth * big.canvasHeight;
+
+    for (final style in DitherStyle.values) {
+      test('white is all paper and black is all ink ($style)', () {
+        final white = Quantiser.quantiseToFrame(
+          big,
+          flatBig(255, 255, 255),
+          style,
+        );
+        final black = Quantiser.quantiseToFrame(big, flatBig(0, 0, 0), style);
+        expect(white.length, big.packedBytes);
+        expect(blackPixels(white), 0);
+        expect(blackPixels(black), totalBig);
+      });
+    }
+
+    test('a saturated colour picks an ink by lightness, not by failing', () {
+      // Pure yellow is light, pure blue is dark; with no hue to match, lightness decides.
+      final yellow = Quantiser.quantiseToFrame(
+        big,
+        flatBig(255, 255, 0),
+        DitherStyle.graphic,
+      );
+      final blue = Quantiser.quantiseToFrame(
+        big,
+        flatBig(0, 0, 255),
+        DitherStyle.graphic,
+      );
+      expect(blackPixels(yellow), 0);
+      expect(blackPixels(blue), totalBig);
+    });
+
+    test('photo mode dithers a mid grey into a mix of both inks', () {
+      final frame = Quantiser.quantiseToFrame(
+        big,
+        flatBig(128, 128, 128),
+        DitherStyle.photo,
+      );
+      final fraction = blackPixels(frame) / totalBig;
+      expect(fraction, greaterThan(0.2));
+      expect(fraction, lessThan(0.8));
+    });
+  });
 }

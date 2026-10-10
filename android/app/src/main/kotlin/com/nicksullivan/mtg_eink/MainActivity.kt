@@ -1,6 +1,5 @@
 package com.nicksullivan.mtg_eink
 
-import android.app.Activity
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
@@ -92,6 +91,12 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
     @Volatile
     private var isoDep: IsoDep? = null
 
+
+
+    /** The NfcA connection, when Dart opened a raw session instead. See [openSession]. */
+    @Volatile
+    private var rawNfcA: NfcA? = null
+
     /**
      * Set while Dart owns the tag. The idle monitor's [probe] tears the connection down and rebuilds
      * it, which mid-transfer is exactly the interruption this project exists to avoid.
@@ -119,7 +124,10 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "openSession" -> onNfcThread(result) { openSession() }
+                    "openSession" -> {
+                        val tech = call.arguments as? String ?: "isoDep"
+                        onNfcThread(result) { openSession(tech) }
+                    }
                     "transceive" -> {
                         val data = call.arguments as? ByteArray
                         if (data == null) {
@@ -129,6 +137,10 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
                         }
                     }
                     "closeSession" -> onNfcThread(result) { closeSession() }
+                    "buzz" -> {
+                        buzz(call.arguments as? Int ?: 1)
+                        result.success(mapOf("ok" to true, "value" to true))
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -154,8 +166,21 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
         }
     }
 
-    private fun openSession(): Boolean {
+    /**
+     * [tech] is `isoDep` (every panel so far) or `nfcA` — raw frames, kept for the diagnostics
+     * console. An NfcA session borrows the idle monitor's own connection rather than opening a
+     * second one; [busy] keeps the monitor's probe off it for the duration.
+     */
+    private fun openSession(tech: String): Boolean {
         val tag = currentTag ?: throw IOException("No panel on the phone.")
+        if (tech == "nfcA") {
+            val nfcA = currentNfcA ?: throw IOException("This tag has no NfcA interface.")
+            busy = true
+            if (!nfcA.isConnected) nfcA.connect()
+            nfcA.timeout = NFCA_TIMEOUT_MS
+            rawNfcA = nfcA
+            return true
+        }
         val dep = IsoDep.get(tag) ?: throw IOException("This tag has no ISO-DEP interface.")
 
         busy = true
@@ -177,10 +202,12 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
      * beats asking anyone to transcribe hex off a phone screen.
      */
     private fun transceive(data: ByteArray): ByteArray {
-        val dep = isoDep ?: throw IOException("No session open.")
+        val dep = isoDep
+        val nfcA = rawNfcA
+        if (dep == null && nfcA == null) throw IOException("No session open.")
         android.util.Log.d(LOG_TAG, ">> ${data.joinToString(" ") { "%02X".format(it) }}")
         val response = try {
-            dep.transceive(data)
+            dep?.transceive(data) ?: nfcA!!.transceive(data)
         } catch (e: Throwable) {
             android.util.Log.d(LOG_TAG, "<< ${e.javaClass.simpleName}: ${e.message}")
             throw e
@@ -192,6 +219,8 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
     private fun closeSession(): Boolean {
         runCatching { isoDep?.close() }
         isoDep = null
+        // A raw NfcA session was the monitor's connection all along; it reconnects below.
+        rawNfcA = null
         // Give the monitor its connection back. If the panel has gone this fails, and the monitor
         // notices on its next check — which is correct.
         runCatching {
@@ -204,6 +233,40 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
 
     override fun onResume() {
         super.onResume()
+        enableReader()
+        emitAdapterState()
+    }
+
+    /*
+     * No field resets. A version of this app turned the field off and on (reader mode off,
+     * setDiscoveryTechnology(READER_DISABLE), back on) whenever the panel was lost — to un-stick a
+     * panel that went deaf after a dropped link. It left the phone's NFC unable to power the 4.2"'s
+     * refresh, anywhere, until NFC was switched off and on in settings: with it, a refresh after a
+     * failure ran 8% of the time; without it, 16 of 16 ran, in spots that had been failing all
+     * morning (2026-10-10). A deaf panel is cured by lifting it away instead.
+     */
+
+    /**
+     * [pulses] firm buzzes, through the vibrator directly. Flutter's HapticFeedback did fire, but
+     * as the system's 50 ms touch "tick" — on a Pixel 10a, too faint to notice mid-write.
+     */
+    private fun buzz(pulses: Int = 1) {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (getSystemService(VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager)
+                .defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(VIBRATOR_SERVICE) as android.os.Vibrator
+        }
+        runCatching {
+            // Firm 150 ms pulses, 100 ms apart: one means "not here", two means "done".
+            val timings = mutableListOf(0L)
+            repeat(pulses) { i -> if (i > 0) timings += 100L; timings += 150L }
+            vibrator.vibrate(android.os.VibrationEffect.createWaveform(timings.toLongArray(), -1))
+        }
+    }
+
+    private fun enableReader() {
         val adapter = nfcAdapter ?: return
 
         val extras = Bundle().apply {
@@ -218,19 +281,10 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
             extras,
         )
 
-        // API 35+: stop the controller cycling through poll technologies we don't use and drop the
-        // card-emulation listen slots, so the field stays devoted to NFC-A. Adds no power; wastes less.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            runCatching {
-                adapter.setDiscoveryTechnology(
-                    this as Activity,
-                    NfcAdapter.FLAG_READER_NFC_A,
-                    NfcAdapter.FLAG_LISTEN_DISABLE,
-                )
-            }
-        }
-
-        emitAdapterState()
+        // No setDiscoveryTechnology here. It is documented as incompatible with reader mode, and in
+        // AOSP's NfcActivityManager it throws while reader mode is on — but records the technology
+        // *before* throwing, which then makes the next enableReaderMode throw in turn. Reader mode's
+        // FLAG_READER_NFC_A already restricts polling to NFC-A.
     }
 
     override fun onPause() {
@@ -240,11 +294,9 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
         isoDep = null
         val adapter = nfcAdapter ?: return
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            runCatching { adapter.resetDiscoveryTechnology(this as Activity) }
-        }
         adapter.disableReaderMode(this)
     }
+
 
     override fun onTagDiscovered(tag: Tag) {
         discoveryCount++
@@ -253,6 +305,17 @@ class MainActivity : FlutterActivity(), NfcAdapter.ReaderCallback {
         val uid = tag.id.joinToString("") { "%02X".format(it) }
         val techs = tag.techList.map { it.substringAfterLast('.') }
         val ats = IsoDep.get(tag)?.historicalBytes?.joinToString(" ") { "%02X".format(it) }
+
+        // Identifies which protocol family a panel speaks: the (G) series exposes IsoDep, the older
+        // mono panels are expected not to. Logged so it can be read straight off the device.
+        android.util.Log.d(
+            LOG_TAG,
+            "detected uid=$uid techs=$techs " +
+                "atqa=${nfcA?.atqa?.joinToString("") { "%02X".format(it) }} " +
+                "sak=${nfcA?.sak?.let { "%02X".format(it) }} ats=$ats " +
+                "nfcAMax=${nfcA?.maxTransceiveLength} " +
+                "isoDepMax=${IsoDep.get(tag)?.maxTransceiveLength}",
+        )
 
         emit(
             mapOf(

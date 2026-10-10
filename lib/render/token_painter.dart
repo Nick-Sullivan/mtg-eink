@@ -10,8 +10,10 @@ import 'canvas_painter.dart';
 
 /// Where each part of the card sits, in panel coordinates.
 ///
-/// Everything is a proportion of the panel's width, with the art box absorbing whatever height is
-/// left, so the template follows [PanelDevice] rather than assuming 128×296.
+/// Everything is measured in a unit scaled from the 128×296 reference — by whichever of width or
+/// height is tighter, so a wider canvas like the 4.2"'s 300×400 gets a proportionally sized frame
+/// rather than one so tall it crushes the art box. Boxes still span the full width, and the art box
+/// absorbs whatever height is left.
 ///
 /// With [hasAbility], a text box sits between the type line and the P/T row and the art gives up
 /// the height. Without it there's no box at all — an empty one would just be a blank white slab.
@@ -20,7 +22,7 @@ class TokenLayout {
   factory TokenLayout(PanelDevice device, {bool hasAbility = false}) {
     final w = device.size.width;
     final h = device.size.height;
-    final u = w / 128;
+    final u = math.min(w / 128, h / 296);
 
     final border = 5 * u;
     final gap = 4 * u;
@@ -61,7 +63,7 @@ class TokenLayout {
     this.pt,
   );
 
-  /// One pixel on the 128-wide reference layout.
+  /// One pixel on the 128×296 reference layout.
   final double unit;
 
   final Rect title;

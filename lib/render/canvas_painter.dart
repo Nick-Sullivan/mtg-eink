@@ -44,10 +44,10 @@ class PanelContent {
   }
 }
 
-/// Draws [content] in panel coordinates, origin top-left.
+/// Draws [content] on the device's canvas, origin top-left.
 ///
-/// The panel stands with its long edge vertical, which is the frame buffer's own orientation, so
-/// there's no rotation anywhere in the pipeline.
+/// The canvas is always portrait. Where the controller's frame isn't, the packer turns it — nothing
+/// that draws needs to know.
 void paintContent(Canvas canvas, PanelDevice device, PanelContent content) {
   final width = device.size.width;
   final height = device.size.height;
@@ -101,8 +101,8 @@ Future<Uint8List> renderPainted(
   paint(canvas);
 
   final image = await recorder.endRecording().toImage(
-    device.pixelsPerRow,
-    device.frameRows,
+    device.canvasWidth,
+    device.canvasHeight,
   );
   try {
     return FramePacker.pack(device, image);

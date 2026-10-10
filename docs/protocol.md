@@ -1,6 +1,7 @@
 # Protocol notes
 
-Two different, incompatible protocols exist in this product family. **Ours is the (G) one.**
+Three different, incompatible protocols exist in this product family. We drive two: the **(G)**
+one for the 2.9", and **Rev2.2** for the 4.2" — see the end of this file for the latter.
 
 | | (G) series — **our panel** | original mono/3-colour series |
 |---|---|---|
@@ -204,3 +205,110 @@ Codes 1, 2, 6 and 7 rotate the bitmap **270°** first. Then 1 bit per pixel, MSB
 - `a()` is **not** an init call — it is `return this.c`, the progress getter.
 - `a(NfcA)` sets the timeout to 700 ms internally, so overrides must come after it.
 - Class `a` and its members are `public`; the package shim isn't strictly needed.
+
+---
+
+# The Rev2.2 protocol — Waveshare 4.2" NFC-Powered e-Paper, black and white
+
+400x300, two colours. Source: `waveshare.feng.nfctag.activity.a.r(IsoDep, 3, Bitmap)` in
+`NFCTag_EN.apk` (from the 4.2" wiki, `files.waveshare.com/wiki/common/NFCTag_EN.7z`). jadx can't
+decompile that method normally; `--show-bad-code` recovers it. **Every step below was then
+confirmed on a real panel**, 2026-10-10 — see `PROGRESS.md` for the run log.
+
+The wiki calls this board revision "Rev2.2: the NFC chip has been replaced, and the display is
+updated using a fast flashing method". It speaks neither the (G) commands (`6D00` to all of them)
+nor the old `0xCD` ones — it isn't NfcA-only.
+
+## Telling it apart
+
+Radio-level, it is identical to the 2.9" (G): techs `IsoDep, NfcA, MifareClassic`, ATQA `0400`,
+SAK `28`, maxTransceiveLength 253 (NfcA) / 65279 (IsoDep). **Only the ATS historical bytes differ:**
+
+| panel | ATS historical bytes |
+|---|---|
+| 2.9" (G) | `90 D2 48 58 52 00` — `90` then the UID |
+| 4.2" Rev2.2 | `59 5A 52 43 4F 53 03 00` — ASCII `YZRCOS`, then `03 00` |
+
+The panel doesn't report its size; the vendor app makes you pick it. `YZRCOS` means the 4.2" here
+only because that is the only Rev2.2 panel we support.
+
+## What the NFC chip is
+
+A bridge to the display controller (SSD1683-style command set). After authenticating, the phone
+pulses the controller's reset line and writes its registers one at a time, as wired firmware would.
+Every `74 9x` command answers `9000` whether or not the controller did anything with it — **a
+`9000` proves the bridge took the bytes, nothing more.**
+
+## Commands
+
+All over `IsoDep`, CLA `0x74`.
+
+```
+74 B1 00 00 08 00 11 22 33 44 55 66 77     authenticate (fixed key)            -> 9000
+74 B3 00 00 <n+1> <n> <password>           user password; n=0 sends 01 00      -> 6A00 none set
+                                                                                  6A01 accepted
+                                                                                  6A02 wrong
+74 97 <level> 08 00                        controller reset line, level 01/00  -> 9000
+74 99 00 0D 01 <reg>                       select controller register          -> 9000
+74 9A 00 0E <len> <data>                   write data to it (also image data)  -> 9000
+74 9B 00 0F 01                             read busy: first byte 01 busy, 00 idle, then 9000
+```
+
+## Write sequence (400x300)
+
+```
+auth; password (only 6A02 stops it)
+reset high, 50 ms, low, 50 ms, high, 10 ms
+21 <- 48 00          display update control: invert B/W RAM, bypass red RAM — hence 1 = black
+3C <- 05             border
+1A <- 6E             temperature register — selects the fast waveform
+22 <- 91, 20         load that LUT;  wait 100 ms
+11 <- 03             data entry: x then y increasing
+44 <- 00 31          RAM x window, bytes 0..49
+45 <- 00 00 2B 01    RAM y window, rows 0..299
+4E <- 00, 4F <- 00 00   address counter to origin;  wait 100 ms
+24                   write RAM, then 60 x  74 9A 00 0E FA <250 bytes>  (15,000 = 400x300/8)
+22 <- C7, 20         refresh
+wait 1000 ms with NO traffic, then poll 74 9B every 250 ms until 00
+```
+
+| phase | measured |
+|---|---|
+| setup | ~0.8 s |
+| 60 data blocks | ~3.2 s |
+| refresh (busy) | ~1.6-1.9 s from the `20` |
+
+## Frame format — established on hardware
+
+```
+300 rows x 50 bytes = 15,000 bytes, 1 bit per pixel, most significant bit leftmost, 1 = black
+```
+
+Held **portrait**, frame row 0 runs down the **left** edge and pixel 0 of each row is at the
+**bottom**: the frame is the portrait canvas turned a quarter turn clockwise. Canvas pixel (u, v),
+from the top-left, is frame (x = 399 − v, y = u). Found by photographing a probe frame: bars along
+row 0 and column 0, a square near the origin, and a thin diagonal that came out smooth (so not
+LSB-first, which would sawtooth every 8 pixels).
+
+## The refresh is the fragile part
+
+Every command answers `9000` whether or not the refresh then works; only the busy flag tells.
+
+- **Don't cycle the phone's field.** Turning reader mode off and on, or switching polling off with
+  `setDiscoveryTechnology`, left a Pixel 10a's NFC too weak to finish this panel's refresh anywhere,
+  until NFC was toggled in settings. Most of the "unreliability" found on 2026-10-10 was this —
+  without it, 16 of 16 refreshes ran. Everything below was measured partly under that degradation.
+
+- **A refresh needs more power than the field always gives.** In a weak spot it starts like any
+  other, then dies when the panel's stored energy runs out — under 1 s, or once between 1.1 and
+  1.6 s — and the picture doesn't change. Good refreshes stay busy 1.6–1.9 s. Which spots are good
+  depends on the phone and drifted over a morning on one Pixel 10a.
+- **Nothing reports power.** No Android API, no bridge command; the booster power-up (`22 C0`/`20`)
+  behaves the same everywhere. The refresh itself is the only test — hence the app's probe: a
+  refresh with no image, judged busy at 1.45 s.
+- **Retries within a connection never worked**, whatever was varied. A fresh power-up (lift the panel
+  away and back) is the only cure seen.
+- **Rapid polling cuts a refresh short** (100 ms polls: busy ends at ~0.5 s everywhere). Single polls
+  are harmless; the vendor's 1 s of quiet then 250 ms polls is safe.
+- **The controller keeps its image RAM across a reset-line pulse**, so a re-refresh needs only reset
+  and setup.

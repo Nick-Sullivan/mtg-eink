@@ -14,7 +14,7 @@ import '../models/token_content.dart';
 /// ```
 /// designs/
 ///   index.json        metadata: kind, framing settings or token fields, newest first
-///   <id>.frame        9,472 rendered bytes — a cache, for thumbnails and re-sends
+///   <id>.frame        the packed frame for the panel it was made on — a cache, for thumbnails
 ///   <id>.src          the original picture, as picked (images only)
 /// ```
 ///
@@ -88,6 +88,7 @@ class DesignStore {
                 DateTime.tryParse(entry['createdAt'] as String? ?? '') ??
                 DateTime.now(),
             frame: await file.readAsBytes(),
+            deviceId: entry['device'] as String? ?? SavedDesign.legacyDeviceId,
             settings: settings == null
                 ? null
                 : ImageSettings.fromJson(settings),
@@ -104,6 +105,7 @@ class DesignStore {
 
   Future<SavedDesign> save({
     required String name,
+    required String deviceId,
     required Uint8List frame,
     required Uint8List source,
     required ImageSettings settings,
@@ -114,6 +116,7 @@ class DesignStore {
       name: name,
       createdAt: DateTime.now(),
       frame: frame,
+      deviceId: deviceId,
       settings: settings,
       hasSource: true,
     );
@@ -124,6 +127,7 @@ class DesignStore {
   /// Saves an MTG token. Its fields go in the index; there's no source picture.
   Future<SavedDesign> saveToken({
     required String name,
+    required String deviceId,
     required Uint8List frame,
     required TokenContent token,
   }) async {
@@ -135,6 +139,7 @@ class DesignStore {
         name: name,
         createdAt: DateTime.now(),
         frame: frame,
+        deviceId: deviceId,
         token: token,
       ),
     );

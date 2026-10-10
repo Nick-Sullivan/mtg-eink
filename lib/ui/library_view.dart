@@ -45,18 +45,27 @@ class LibraryView extends StatelessWidget {
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final design = designs[index];
+        // Each frame is packed for the panel it was made on, so decode it as that panel.
+        final madeFor = PanelDevice.byId(design.deviceId);
 
         return ListTile(
           leading: SizedBox(
-            width: 34,
+            width: 60,
             height: 78,
-            child: FrameThumbnail(device: device, frame: design.frame),
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: madeFor.size.width / madeFor.size.height,
+                child: FrameThumbnail(device: madeFor, frame: design.frame),
+              ),
+            ),
           ),
           title: Text(design.name),
           subtitle: Text(
-            design.kind == DesignKind.token
-                ? 'MTG token · ${_describe(design.createdAt)}'
-                : _describe(design.createdAt),
+            [
+              if (design.kind == DesignKind.token) 'MTG token',
+              if (madeFor != device) madeFor.name,
+              _describe(design.createdAt),
+            ].join(' · '),
           ),
           trailing: PopupMenuButton<String>(
             onSelected: (action) => switch (action) {
@@ -116,7 +125,9 @@ class _FrameThumbnailState extends State<FrameThumbnail> {
   @override
   void didUpdateWidget(FrameThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.frame != widget.frame) _decode();
+    if (oldWidget.frame != widget.frame || oldWidget.device != widget.device) {
+      _decode();
+    }
   }
 
   @override

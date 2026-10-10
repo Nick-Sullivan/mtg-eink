@@ -122,8 +122,8 @@ Future<Uint8List> renderImageFrame(ImageContent content) async {
   paintImageContent(canvas, content);
 
   final image = await recorder.endRecording().toImage(
-    device.pixelsPerRow,
-    device.frameRows,
+    device.canvasWidth,
+    device.canvasHeight,
   );
   try {
     return await FramePacker.pack(device, image, style: content.style);
@@ -141,14 +141,17 @@ Future<ui.Image> renderImagePreview(ImageContent content) async {
   return decodeFrame(content.device, await renderImageFrame(content));
 }
 
-/// Expands a packed frame back into a viewable image, using the palette's on-screen colours.
+/// Expands a packed frame back into a viewable image, the right way up, in the palette's on-screen
+/// colours.
 Future<ui.Image> decodeFrame(PanelDevice device, Uint8List frame) {
-  final rgba = Uint8List(device.pixelsPerRow * device.frameRows * 4);
+  final width = device.canvasWidth;
+  final height = device.canvasHeight;
+  final rgba = Uint8List(width * height * 4);
 
-  for (var y = 0; y < device.frameRows; y++) {
-    for (var x = 0; x < device.pixelsPerRow; x++) {
-      final colour = device.palette[codeAt(device, frame, x, y)];
-      final out = (y * device.pixelsPerRow + x) * 4;
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final colour = device.palette[codeAtCanvas(device, frame, x, y)];
+      final out = (y * width + x) * 4;
       rgba[out] = (colour.r * 255).round();
       rgba[out + 1] = (colour.g * 255).round();
       rgba[out + 2] = (colour.b * 255).round();
@@ -159,8 +162,8 @@ Future<ui.Image> decodeFrame(PanelDevice device, Uint8List frame) {
   final completer = Completer<ui.Image>();
   ui.decodeImageFromPixels(
     rgba,
-    device.pixelsPerRow,
-    device.frameRows,
+    width,
+    height,
     ui.PixelFormat.rgba8888,
     completer.complete,
   );

@@ -12,14 +12,14 @@ import 'quantiser.dart';
 class FramePacker {
   const FramePacker._();
 
-  /// Packs an image already rendered at the device's frame size.
+  /// Packs an image already rendered at the device's canvas size.
   static Future<Uint8List> pack(
     PanelDevice device,
     ui.Image image, {
     DitherStyle style = DitherStyle.graphic,
   }) async {
-    assert(image.width == device.pixelsPerRow);
-    assert(image.height == device.frameRows);
+    assert(image.width == device.canvasWidth);
+    assert(image.height == device.canvasHeight);
 
     final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (data == null) {

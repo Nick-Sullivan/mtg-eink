@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/creature_art.dart';
 import '../models/panel_device.dart';
+import 'diagnostics_page.dart';
 
 /// Things you set once and then forget about.
 ///
@@ -45,7 +46,7 @@ class SettingsView extends StatelessWidget {
 
         Text('This panel', style: titles.titleMedium),
         const SizedBox(height: 12),
-        _Fact('Resolution', '${device.pixelsPerRow} x ${device.frameRows}'),
+        _Fact('Resolution', '${device.canvasWidth} x ${device.canvasHeight}'),
         _Fact('Colours', '${device.palette.length}'),
         _Fact(
           'Refresh',
@@ -66,6 +67,17 @@ class SettingsView extends StatelessWidget {
                 ),
               ),
           ],
+        ),
+        const Divider(height: 32),
+
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.terminal),
+          title: const Text('Diagnostics'),
+          subtitle: const Text('Send raw commands to a panel'),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const DiagnosticsPage()),
+          ),
         ),
         const Divider(height: 32),
 

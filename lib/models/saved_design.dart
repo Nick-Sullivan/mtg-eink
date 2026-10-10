@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import '../render/quantiser.dart';
+import 'panel_device.dart';
 import 'token_content.dart';
 
 /// Which tab a saved design was made in, and so which tab reopens it.
@@ -54,6 +55,7 @@ class SavedDesign {
     required this.name,
     required this.createdAt,
     required this.frame,
+    this.deviceId = legacyDeviceId,
     this.settings,
     this.hasSource = false,
     this.token,
@@ -63,8 +65,18 @@ class SavedDesign {
   final String name;
   final DateTime createdAt;
 
-  /// The device's packed ink codes, ready for `GSeriesProtocol.writeFrame`.
+  /// The packed ink codes for [deviceId]'s panel. Meaningless decoded as any other panel's.
   final Uint8List frame;
+
+  /// The panel this was made for: which one [frame] is packed for, and which canvas the image
+  /// framing in [settings] is measured on. Tokens and sources redraw for any panel; only those two
+  /// are tied to this one.
+  final String deviceId;
+
+  /// What designs saved before there was more than one panel were made for: the 2.9" (G).
+  /// A literal because a default parameter must be const; `saved_design_test` pins it to
+  /// [PanelDevice.waveshare29G].
+  static const legacyDeviceId = 'waveshare-2.9-g';
 
   /// How the source was framed. Null for designs saved before sources were kept.
   final ImageSettings? settings;
@@ -88,6 +100,7 @@ class SavedDesign {
     name: name ?? this.name,
     createdAt: createdAt,
     frame: frame,
+    deviceId: deviceId,
     settings: settings,
     hasSource: hasSource,
     token: token,
@@ -99,6 +112,7 @@ class SavedDesign {
     'name': name,
     'createdAt': createdAt.toIso8601String(),
     'kind': kind.name,
+    'device': deviceId,
     'hasSource': hasSource,
     if (settings != null) 'settings': settings!.toJson(),
     if (token != null) 'token': token!.toJson(),

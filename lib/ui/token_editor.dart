@@ -193,7 +193,7 @@ class _ArtPicker extends StatelessWidget {
           items: [
             DropdownMenuItem(
               value: null,
-              child: row(const Icon(Icons.texture), 'None (hatched)'),
+              child: row(const Icon(Icons.texture), 'None'),
             ),
             for (final art in CreatureArt.all)
               DropdownMenuItem(

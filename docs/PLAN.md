@@ -228,6 +228,33 @@ and ideally art.
 > 128 x 296 (ratio 0.43) — considerably taller and narrower. A token layout cannot just be a
 > shrunken card face. Expect a stacked design: big P/T, name, minimal art.
 
+### M9 — Second panel: Waveshare 4.2" (Rev2.2), black and white ✅ **writes from the app**
+
+A third protocol, not the old `0xCD` one the plan expected. Full command set in
+[`protocol.md`](protocol.md); method and evidence in `PROGRESS.md`.
+
+- [x] Identify it: both panels are IsoDep with identical ATQA/SAK/limits. Only the ATS differs:
+      `YZRCOS` on the 4.2", `90` + UID on the 2.9". `PanelDevice.forAts`.
+- [x] Diagnostics page (Settings → Diagnostics) running hex scripts pushed with `adb`, for probing
+      a panel one command at a time without rebuilding.
+- [x] Recover the protocol from `NFCTag_EN.apk` (the 4.2" wiki's app) and confirm each step on the
+      panel: auth, password, reset, controller setup, 60 data blocks, refresh, busy poll.
+- [x] Polarity (1 = black) and orientation (frame = portrait canvas turned a quarter turn
+      clockwise), pinned by photographing a probe frame. `frame_packing_test.dart`.
+- [x] Integrated: canvas vs frame coordinates on `PanelDevice`, `Rev22Protocol`, a dispatcher,
+      auto-switch on detection, saved designs remember their panel.
+- [x] Position probe before upload: a refresh with no image, judged at 1.45 s (`Rev22Protocol.probe`).
+- [x] ~~Recover a deaf panel with a 1 s field-off~~ — **removed: field resets degraded the phone's
+      NFC**, which turned out to be the cause of most of the day's failures. Lifting the panel away
+      recovers it.
+- [x] **Reliability: found it.** The app's field resets were degrading the phone's NFC; with them
+      removed, 16/16 refreshes ran. Still to do: re-measure placement sensitivity without the resets,
+      and try another phone.
+- [x] UX Nick asked for: single buzz = bad spot, double buzz = done; "lift it away and bring it
+      back", never "move it". Built; **not yet tried on the panel**.
+- [ ] Password-protected panels (`6A02`). The wiki says the default is `1234`; ours has none set.
+- [ ] Judge a token layout on the 4.2"'s portrait canvas — it now gets a real art box.
+
 ## Verification
 
 - `flutter analyze` clean after each milestone.
@@ -237,7 +264,9 @@ and ideally art.
 
 ## Reference
 
-- [`protocol.md`](protocol.md) — the (G) command set, and the old one for contrast
+- [`protocol.md`](protocol.md) — the (G) and Rev2.2 command sets, and the old one for contrast
 - Vendor app: `com.waveshera.epaper`, from `files.waveshare.com/wiki/common/WaveShare_NFC.zip`
+- Rev2.2 vendor app: `NFCTag_EN.apk`, from `files.waveshare.com/wiki/common/NFCTag_EN.7z`
+  (`waveshare.feng.nfctag.activity.a.r` — jadx needs `--show-bad-code` for that method)
 - [2.9inch NFC-Powered e-Paper (G) product page](https://www.waveshare.com/2.9inch-nfc-powered-e-paper-g.htm)
 - Decompile with [jadx](https://github.com/skylot/jadx) — `IsoDepUtils.java`, `ImageUtils.java`

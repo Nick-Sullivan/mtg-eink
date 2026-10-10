@@ -9,7 +9,8 @@ import '../models/panel_device.dart';
 import '../models/saved_design.dart';
 import '../models/token_content.dart';
 import '../nfc/apdu.dart';
-import '../nfc/gseries_protocol.dart';
+import '../nfc/panel_writer.dart';
+import '../nfc/rev22_protocol.dart';
 import '../nfc/tag_events.dart';
 import '../render/canvas_painter.dart';
 import '../render/image_content.dart';
@@ -47,7 +48,6 @@ class _HomePageState extends State<HomePage>
   )..addListener(_onTabChanged);
 
   final _channel = ApduChannel();
-  late final _protocol = GSeriesProtocol(_channel);
   final _textController = TextEditingController(text: 'HELLO');
   final _store = DesignStore();
 
@@ -66,6 +66,10 @@ class _HomePageState extends State<HomePage>
   bool _writing = false;
   int _percent = 0;
   String? _error;
+
+  /// Coaching shown on the write overlay: mid-write when the refresh hasn't started and the panel
+  /// needs moving, or while waiting when a write is to be retried on the next placement.
+  String? _retryNotice;
 
   /// Shown briefly on the write button after a successful write, then cleared.
   bool _succeeded = false;
@@ -127,6 +131,14 @@ class _HomePageState extends State<HomePage>
   }
 
   void _onTagEvent(TagEvent event) {
+    if (event is TagDetected) {
+      final detected = PanelDevice.forAts(event.ats);
+      if (detected != null && detected != _device && !_writing) {
+        _switchToDetected(detected, event);
+        return;
+      }
+    }
+
     setState(() {
       switch (event) {
         case AdapterState():
@@ -137,6 +149,9 @@ class _HomePageState extends State<HomePage>
           // The whole point of arming: the panel arriving is what starts the write.
           if (_armedFrame != null && !_writing) {
             WidgetsBinding.instance.addPostFrameCallback((_) => _write());
+          } else if (_writing) {
+            // Back already, while the last attempt is still closing. Pick it up when that's done.
+            _arrivedWhileWriting = true;
           }
         case TagLost():
           _lost = event;
@@ -145,6 +160,24 @@ class _HomePageState extends State<HomePage>
           break;
       }
     });
+  }
+
+  /// A different kind of panel arrived: follow it rather than writing a frame of the wrong shape.
+  ///
+  /// An armed frame was rendered for the old panel, so it's rendered again for this one — the
+  /// composition itself (text, token, picture) carries over, and the write goes ahead as intended.
+  void _switchToDetected(PanelDevice detected, TagDetected event) {
+    final wasArmed = _armed;
+    _changeDevice(detected);
+    setState(() {
+      _tag = event;
+      _lost = null;
+      _armedFrame = null;
+    });
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('${detected.name} detected')));
+    if (wasArmed) _arm();
   }
 
   // --------------------------------------------------------------- content
@@ -165,14 +198,22 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  /// Switching panel discards the composition: the frame size and the available inks both change,
-  /// so reinterpreting what was there would be guesswork.
+  /// Switching panel keeps what you were composing but resets what's tied to the old panel: text
+  /// colours go back to the new panel's own paper and pen, and a picture is re-framed to fill the
+  /// new canvas — its pan and zoom were measured in the old one's pixels.
   void _changeDevice(PanelDevice device) {
     setState(() {
       _device = device;
       _content = PanelContent.forDevice(device, text: _content.text);
-      _image?.source.dispose();
-      _image = null;
+      final image = _image;
+      if (image != null) {
+        _image = ImageContent(
+          device: device,
+          source: image.source,
+          bytes: image.bytes,
+          style: image.style,
+        ).recentred();
+      }
     });
   }
 
@@ -239,10 +280,23 @@ class _HomePageState extends State<HomePage>
 
     final settings = design.settings;
     final source = await _store.readSource(design.id);
+    if (!mounted) return;
 
     if (source == null || settings == null) {
       // Saved before sources were kept: the flattened frame is all there is. It can still be
-      // re-sent, but re-cropping it would be quantising an already-quantised picture.
+      // re-sent, but re-cropping it would be quantising an already-quantised picture — and it can
+      // only go back to the panel it was packed for.
+      if (design.deviceId != _device.id) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'This design was saved for the '
+              '${PanelDevice.byId(design.deviceId).name} and can only be sent to that panel.',
+            ),
+          ),
+        );
+        return;
+      }
       final decoded = await decodeFrame(_device, design.frame);
       if (!mounted) {
         decoded.dispose();
@@ -264,6 +318,8 @@ class _HomePageState extends State<HomePage>
       decoded.dispose();
       return;
     }
+    // The saved framing is in the original panel's canvas pixels; on another panel, start centred.
+    final sameDevice = design.deviceId == _device.id;
     _setImage(
       ImageContent(
         device: _device,
@@ -273,7 +329,7 @@ class _HomePageState extends State<HomePage>
         scale: settings.scale,
         style: settings.style,
       ),
-      recentre: false,
+      recentre: !sameDevice,
     );
   }
 
@@ -299,10 +355,16 @@ class _HomePageState extends State<HomePage>
     // context still being valid afterwards.
     final messenger = ScaffoldMessenger.of(context);
     if (_tab == AppTab.token) {
-      await _store.saveToken(name: name, frame: frame, token: token);
+      await _store.saveToken(
+        name: name,
+        deviceId: _device.id,
+        frame: frame,
+        token: token,
+      );
     } else {
       await _store.save(
         name: name,
+        deviceId: _device.id,
         frame: frame,
         source: image!.bytes,
         settings: ImageSettings(
@@ -345,12 +407,24 @@ class _HomePageState extends State<HomePage>
     setState(() {
       _armedFrame = frame;
       _error = null;
+      _retryNotice = null;
     });
 
     if (_panelPresent) _write();
   }
 
-  void _disarm() => setState(() => _armedFrame = null);
+  /// Moving the panel around near the phone has never rescued a write; lifting it away and bringing
+  /// it back — a fresh power-up — always has. So that's the only thing ever asked for.
+  static const _liftNotice =
+      'Not a good spot. Lift the panel away and bring it back, about a centimetre from the phone.';
+
+  /// Set when the panel is detected again before the previous attempt has finished closing.
+  bool _arrivedWhileWriting = false;
+
+  void _disarm() => setState(() {
+    _armedFrame = null;
+    _retryNotice = null;
+  });
 
   Future<void> _write() async {
     final frame = _armedFrame;
@@ -358,21 +432,41 @@ class _HomePageState extends State<HomePage>
 
     setState(() {
       _writing = true;
+      _arrivedWhileWriting = false;
       _percent = 0;
       _error = null;
+      if (_device.protocol == PanelProtocol.rev22) {
+        _retryNotice = 'Checking this spot…';
+      }
     });
 
     String? error;
+    var refreshFailed = false;
+    var lost = false;
     try {
       await _channel.open();
-      await _protocol.readDeviceInfoChecked();
-      await _protocol.writeFrame(
+      await writeToPanel(
+        _channel,
         _device,
         frame,
         onProgress: (p) {
           if (mounted) setState(() => _percent = p);
         },
+        // The spot can power a refresh: say so now, before the upload, so it's held still.
+        onSpotFound: () {
+          if (mounted) {
+            setState(
+              () => _retryNotice = 'Good spot — hold still while it writes.',
+            );
+          }
+        },
       );
+    } on RefreshNotStarted catch (e) {
+      error = e.message;
+      refreshFailed = true;
+    } on PanelLost {
+      error = 'Lost the panel.';
+      lost = true;
     } on NfcFailure catch (e) {
       error = e.message;
     } finally {
@@ -383,16 +477,31 @@ class _HomePageState extends State<HomePage>
       }
     }
 
+    // Both are "try again": stay armed, so bringing the panel back starts the write from the top.
+    // A bad spot buzzes once, a finished write twice.
+    final retry = refreshFailed || lost;
+    if (refreshFailed) _channel.buzz().catchError((_) {});
+    if (error == null) _channel.buzz(pulses: 2).catchError((_) {});
+
     if (!mounted) return;
     setState(() {
       _writing = false;
-      _error = error;
+      _error = retry ? null : error;
+      _retryNotice = lost
+          ? 'Lost the panel. Lift it away and bring it back.'
+          : refreshFailed
+          ? _liftNotice
+          : null;
       // Success is shown on the button itself and then fades; only failures persist, because only
       // failures need you to do something about them.
       _succeeded = error == null;
-      // A finished write disarms either way; a retry re-arms deliberately.
-      _armedFrame = null;
+      // A finished write disarms either way, unless the panel just needs placing again.
+      if (!retry) _armedFrame = null;
     });
+    // The panel came back while that attempt was still closing; its arrival was the cue to go again.
+    if (retry && _arrivedWhileWriting && _panelPresent) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _write());
+    }
 
     _successTimer?.cancel();
     if (error == null) {
@@ -436,6 +545,8 @@ class _HomePageState extends State<HomePage>
                     key: const ValueKey('write-overlay'),
                     writing: _writing,
                     percent: _percent,
+                    holdFor: _device.typicalWrite,
+                    notice: _retryNotice,
                     onCancel: _disarm,
                   )
                 : const SizedBox.shrink(key: ValueKey('no-overlay')),

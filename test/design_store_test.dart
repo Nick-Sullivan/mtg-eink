@@ -37,6 +37,7 @@ void main() {
   Future<SavedDesign> save(String name, {int fill = 0xAB, String src = 'a'}) =>
       store.save(
         name: name,
+        deviceId: device.id,
         frame: frameOf(fill),
         source: sourceOf(src),
         settings: _settings,
@@ -159,6 +160,41 @@ void main() {
     expect(await store.load(), isEmpty);
   });
 
+  group('the panel a design was made for', () {
+    // A frame is packed for one panel and is garbage decoded as another, so the library has to
+    // remember which. Everything saved before there were two panels was made on the 2.9".
+    test('survives a round trip', () async {
+      await store.saveToken(
+        name: 'Big',
+        deviceId: PanelDevice.waveshare42.id,
+        frame: Uint8List(PanelDevice.waveshare42.packedBytes),
+        token: const TokenContent(),
+      );
+      expect((await store.load()).single.deviceId, PanelDevice.waveshare42.id);
+    });
+
+    test(
+      'entries saved before panels were recorded load as the 2.9"',
+      () async {
+        await save('Old');
+        final index = File('${root.path}/designs/index.json');
+        index.writeAsStringSync(
+          index.readAsStringSync().replaceAll('"device":"${device.id}",', ''),
+        );
+        expect(index.readAsStringSync(), isNot(contains('device')));
+
+        expect(
+          (await store.load()).single.deviceId,
+          PanelDevice.waveshare29G.id,
+        );
+      },
+    );
+
+    test('the legacy default is the 2.9" (G)', () {
+      expect(SavedDesign.legacyDeviceId, PanelDevice.waveshare29G.id);
+    });
+  });
+
   group('tokens', () {
     const token = TokenContent(
       name: 'Saproling',
@@ -168,7 +204,12 @@ void main() {
     );
 
     test('a saved token comes back as a token with its fields', () async {
-      await store.saveToken(name: 'Sap', frame: frameOf(3), token: token);
+      await store.saveToken(
+        name: 'Sap',
+        deviceId: device.id,
+        frame: frameOf(3),
+        token: token,
+      );
       final design = (await store.load()).single;
 
       expect(design.kind, DesignKind.token);
@@ -179,7 +220,12 @@ void main() {
 
     test('tokens and images share one library, newest first', () async {
       await save('Photo');
-      await store.saveToken(name: 'Sap', frame: frameOf(3), token: token);
+      await store.saveToken(
+        name: 'Sap',
+        deviceId: device.id,
+        frame: frameOf(3),
+        token: token,
+      );
 
       final designs = await store.load();
       expect(designs.map((d) => d.name), ['Sap', 'Photo']);
@@ -189,6 +235,7 @@ void main() {
     test('a token survives a rename', () async {
       final saved = await store.saveToken(
         name: 'Sap',
+        deviceId: device.id,
         frame: frameOf(3),
         token: token,
       );

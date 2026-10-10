@@ -40,6 +40,7 @@ android {
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        resValue("string", "app_name", "mtg-eink")
     }
 
     signingConfigs {
@@ -54,6 +55,13 @@ android {
     }
 
     buildTypes {
+        // A debug build can never update the Play-installed app (different signing key), so give it
+        // its own ID and it installs alongside instead. Only the foreground app gets reader mode, so
+        // the two don't fight over the panel.
+        debug {
+            applicationIdSuffix = ".dev"
+            resValue("string", "app_name", "mtg-eink dev")
+        }
         release {
             signingConfig = if (hasReleaseKeystore) {
                 signingConfigs.getByName("release")
