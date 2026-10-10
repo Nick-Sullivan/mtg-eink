@@ -344,6 +344,20 @@ than trusting either reading.
 
 ## Log
 
+- **2026-10-10** — **"Bad spots get worse until NFC is toggled": probably the panel's charge, not
+  the phone.** Over every logged 4.2" placement that day, the spot-check refresh (started ~1 s after
+  detection) succeeded **4/29 (14%)** when the placement came <8 s after the previous one, ~60%
+  after an 8–60 s gap, 3/9 after >60 s. And the write's own refresh — ~4 s of upload in the field
+  after a passed check that had just drained the panel — **never failed**. So the panel's storage
+  needs a few seconds in the field before it can power a refresh; rapid retries arrive drained and
+  fail again, and toggling NFC "fixed" it by forcing a pause. The vendor app never hits this: you
+  place the panel, *then* tap write. Fix: `PanelDevice.chargeTime` (4.2": 3 s, a first guess) is
+  waited out, quietly, since the panel's arrival (`writeToPanel(inFieldSince:)`) before the spot
+  check. Ruled out on the way: Android's chip configuration doesn't drift (every `CORE_SET_CONFIG`
+  in the NCI snoop log is one of two screen-state values); the ST firmware trace's reader-mode
+  records aren't publicly documented. Tooling: `dumpsys nfc` holds the NCI and vendor snoop logs —
+  base64, then [version u8][timestamp µs u64], then zlib of [len u16][delta µs u32][type u8][data].
+
 - **2026-10-10** — **NFC degraded again with use, no field resets involved; NFC off/on cured it.**
   `dumpsys nfc` showed reader mode toggling only on pause/resume and no
   `setDiscoveryTechnology`, so it wasn't the morning's cause. logcat showed the real churn: the
@@ -384,7 +398,9 @@ than trusting either reading.
   0 V, leaving charge that only bleeds off safely while powered. **Result: the field can't power
   the full waveform at all** — busy never rose, twice running. Back to fast, spot check back on.
   The speckle is unsolved; the only cure seen is keeping the panel in the field ~10 s after busy
-  clears (6 s wasn't enough). Also found: after a refresh that ran out of power the panel can stop
+  clears (6 s wasn't enough). That's now an opt-in **Clean finish** setting (Settings, shown only
+  for a panel with `PanelDevice.cleanFinishSettle` > 0 — the 4.2"): `writeToPanel(cleanFinish:)`
+  holds the panel quietly for 10 s after the refresh before reporting done. Also found: after a refresh that ran out of power the panel can stop
   answering the presence ping while still sitting there; the app declared it lost but the platform
   still held it, so nothing re-detected it until it was physically removed. The ping now falls
   back to a reconnect before declaring loss.

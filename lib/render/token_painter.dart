@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter/material.dart';
@@ -91,6 +90,10 @@ class TokenLayout {
   final Rect pt;
 }
 
+/// The card's typeface, named rather than left to the platform default so tests can load the same
+/// one the phone draws with (Android's system Roboto) and judge the real glyphs.
+const tokenFontFamily = 'Roboto';
+
 /// The layout [token] gets on [device].
 TokenLayout tokenLayoutFor(PanelDevice device, TokenContent token) =>
     TokenLayout(device, hasAbility: token.ability.trim().isNotEmpty);
@@ -101,15 +104,13 @@ Size tokenArtBox(PanelDevice device, TokenContent token) =>
 
 /// Draws [token] on the card template, in panel coordinates.
 ///
-/// With [picture], the art box shows that instead of the preset creature: [pictureInks] if given —
-/// the picture already quantised, from [renderImagePreview] — otherwise the source itself, for
-/// while that's still being worked out.
+/// With [picture], the art box shows that instead of the preset creature, as its source —
+/// [renderTokenFrame] lays the quantised version over it.
 void paintToken(
   Canvas canvas,
   PanelDevice device,
   TokenContent token, {
   ImageContent? picture,
-  ui.Image? pictureInks,
 }) {
   final layout = tokenLayoutFor(device, token);
   final u = layout.unit;
@@ -143,20 +144,10 @@ void paintToken(
   final art = layout.art;
   if (picture != null) {
     final box = layout.artPixels;
-    if (pictureInks != null) {
-      canvas.drawImageRect(
-        pictureInks,
-        Offset.zero &
-            Size(pictureInks.width.toDouble(), pictureInks.height.toDouble()),
-        box,
-        Paint()..filterQuality = FilterQuality.none,
-      );
-    } else {
-      canvas.save();
-      canvas.translate(box.left, box.top);
-      paintImageContent(canvas, picture);
-      canvas.restore();
-    }
+    canvas.save();
+    canvas.translate(box.left, box.top);
+    paintImageContent(canvas, picture);
+    canvas.restore();
   } else if (CreatureArt.byId(token.art) case final creature?) {
     paintCreatureArt(canvas, creature, art.deflate(6 * u), ink);
   } else {
@@ -269,6 +260,7 @@ void _paintFitted(
       text: text,
       style: TextStyle(
         color: colour,
+        fontFamily: tokenFontFamily,
         fontSize: size,
         fontWeight: weight,
         height: 1,
@@ -288,9 +280,10 @@ void _paintFitted(
   }
 
   final dx = centred ? box.left + (box.width - painter.width) / 2 : box.left;
-  painter.paint(
+  _paintInked(
     canvas,
-    Offset(dx, box.top + (box.height - painter.height) / 2),
+    painter,
+    _snapped(Offset(dx, box.top + (box.height - painter.height) / 2)),
   );
   painter.dispose();
 }
@@ -313,6 +306,7 @@ void _paintWrapped(
       text: text,
       style: TextStyle(
         color: colour,
+        fontFamily: tokenFontFamily,
         fontSize: size,
         fontWeight: FontWeight.w500,
         height: lineHeight,
@@ -336,9 +330,46 @@ void _paintWrapped(
     painter = layout(size, maxLines: lines);
   }
 
-  painter.paint(canvas, box.topLeft);
+  _paintInked(canvas, painter, _snapped(box.topLeft));
   painter.dispose();
 }
+
+/// How much a glyph's coverage is multiplied by before it reaches the card. See [_paintInked].
+const _inkGain = 2.0;
+
+/// Paints [painter] at [offset] with its partial coverage boosted, so thin strokes survive the
+/// panel's one bit per pixel.
+///
+/// Anti-aliased text edges are greys, and the packer rounds each pixel to the nearest ink. A
+/// one-pixel stroke that straddles two pixels covers each by about half; half-grey is nearer paper
+/// than ink, so both pixels went white and whole strokes vanished — "Gob in", "Wher" on the 2.9"'s
+/// 7–10 px lines (2026-10-10). Drawing the text on its own layer and scaling its alpha by
+/// [_inkGain] turns any pixel a stroke covers by roughly a third or more into solid ink, while
+/// pixels the glyph barely touches stay paper.
+void _paintInked(Canvas canvas, TextPainter painter, Offset offset) {
+  final bounds = offset & painter.size;
+  canvas.saveLayer(
+    bounds.inflate(2),
+    Paint()
+      ..colorFilter = const ColorFilter.matrix([
+        1, 0, 0, 0, 0, //
+        0, 1, 0, 0, 0,
+        0, 0, 1, 0, 0,
+        0, 0, 0, _inkGain, 0,
+      ]),
+  );
+  painter.paint(canvas, offset);
+  canvas.restore();
+}
+
+/// [offset] on whole pixels.
+///
+/// Text on the panel is one bit per pixel. A one-pixel stroke drawn at a half-pixel offset is
+/// spread across two pixels at half strength each, and both round to paper — at 7–10 px the small
+/// lines lost whole letters that way ("Gob in", "Wher"). On whole pixels the font's strokes land
+/// on pixels instead of between them.
+Offset _snapped(Offset offset) =>
+    Offset(offset.dx.roundToDouble(), offset.dy.roundToDouble());
 
 /// Renders [token] to the device's frame and packs it, with [picture] in the art box if given.
 ///

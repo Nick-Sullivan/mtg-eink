@@ -161,10 +161,11 @@ void main() {
     expect(hex(panel.sent[panel.sent.length - 3]), '74 9B 00 0F 01');
   });
 
-  test(
-    'holds the panel, quietly, for the settle time before reporting done',
-    () async {
-      // Pulled away ~3 s after busy cleared, the white turned to speckle; after ~10 s it stayed clean.
+  group('a clean finish', () {
+    // Pulled away ~3 s after busy cleared, the white turned to speckle; after ~10 s it stayed clean.
+    Future<(FakePanel, FakeTime, List<(DateTime, int)>)> write(
+      Duration settle,
+    ) async {
       final time = FakeTime();
       final panel = FakePanel(clock: () => time.now);
       final progress = <(DateTime, int)>[];
@@ -172,19 +173,40 @@ void main() {
         device,
         frame,
         onProgress: (p) => progress.add((time.now, p)),
+        settle: settle,
       );
+      return (panel, time, progress);
+    }
 
-      // Nothing sent after the sleep command, for the whole settle.
-      expect(hex(panel.sent.last), '74 9A 00 0E 01 01');
-      expect(
-        time.now.difference(panel.sentAt.last),
-        greaterThanOrEqualTo(Rev22Protocol.settleTime),
-      );
-      // 100 only at the very end — "done" means safe to lift.
-      final firstHundred = progress.firstWhere((e) => e.$2 == 100).$1;
-      expect(firstHundred, time.now);
-    },
-  );
+    test(
+      'holds the panel, quietly, for the settle before reporting done',
+      () async {
+        final (panel, time, progress) = await write(device.cleanFinishSettle);
+
+        // Nothing sent after the sleep command, for the whole settle.
+        expect(hex(panel.sent.last), '74 9A 00 0E 01 01');
+        expect(
+          time.now.difference(panel.sentAt.last),
+          greaterThanOrEqualTo(device.cleanFinishSettle),
+        );
+        // 100 only at the very end — "done" means safe to lift.
+        expect(progress.firstWhere((e) => e.$2 == 100).$1, time.now);
+      },
+    );
+
+    test('keeps the progress bar moving through the settle', () async {
+      final (_, _, progress) = await write(device.cleanFinishSettle);
+      final values = progress.map((e) => e.$2).toList();
+      expect(values, orderedEquals([...values]..sort()));
+      // The settle is most of the write, so it's most of the bar — no long stall at the end.
+      expect(values.where((p) => p > 50 && p < 100), isNotEmpty);
+    });
+
+    test('without one, done comes straight after the refresh', () async {
+      final (panel, time, _) = await write(Duration.zero);
+      expect(time.now.difference(panel.sentAt.last), Duration.zero);
+    });
+  });
 
   test('a refused sleep still counts as a finished write', () async {
     // The picture is already up; a panel pulled away that instant just misses the sleep.
@@ -326,6 +348,22 @@ void main() {
       expect(refreshCount(panel), 1);
       // The whole point: nothing uploaded yet.
       expect(panel.sent.where((a) => a[1] == 0x9A && a[4] == 0xFA), isEmpty);
+    });
+
+    test('lets the panel charge, quietly, before anything is sent', () async {
+      // Logged 2026-10-10: a placement within 8 s of the last succeeded 14% of the time with the
+      // probe ~1 s in; the write's refresh, ~4 s into the field, never failed.
+      final time = FakeTime();
+      final start = time.now;
+      final panel = FakePanel(clock: () => time.now);
+      await protocolFor(
+        panel,
+        time,
+      ).probe(charge: PanelDevice.waveshare42.chargeTime);
+      expect(
+        panel.sentAt.first.difference(start),
+        greaterThanOrEqualTo(PanelDevice.waveshare42.chargeTime),
+      );
     });
 
     test('a refresh that dies partway means a bad spot', () async {

@@ -140,4 +140,26 @@ void main() {
       expect(PanelDevice.byId('nonsense'), PanelDevice.waveshare29G);
     });
   });
+
+  group('clean finish', () {
+    test('the 4.2" needs ~10 s in the field after a fast refresh', () {
+      // 6 s still faded on hardware; 10 s didn't (2026-10-10).
+      const panel = PanelDevice.waveshare42;
+      expect(panel.hasCleanFinish, isTrue);
+      expect(
+        panel.cleanFinishSettle,
+        greaterThanOrEqualTo(const Duration(seconds: 10)),
+      );
+      expect(
+        panel.writeTime(cleanFinish: true),
+        panel.typicalWrite + panel.cleanFinishSettle,
+      );
+    });
+
+    test('the 2.9" has none, and asking for one changes nothing', () {
+      const panel = PanelDevice.waveshare29G;
+      expect(panel.hasCleanFinish, isFalse);
+      expect(panel.writeTime(cleanFinish: true), panel.typicalWrite);
+    });
+  });
 }

@@ -38,6 +38,8 @@ class PanelDevice {
     required this.blockSize,
     required this.nominalRefresh,
     required this.typicalWrite,
+    this.cleanFinishSettle = Duration.zero,
+    this.chargeTime = Duration.zero,
   }) : assert(frameQuarterTurns == 0 || frameQuarterTurns == 1);
 
   /// Stable identifier, safe to persist.
@@ -77,6 +79,31 @@ class PanelDevice {
 
   /// How long to hold the panel for a whole write, transfer and refresh, as told to the user.
   final Duration typicalWrite;
+
+  /// How long to keep the panel in the field after its refresh finishes, for a "clean finish" —
+  /// or zero if the panel doesn't need it.
+  ///
+  /// The 4.2" refreshes with a fast waveform, the only one the phone's field can power, and pulled
+  /// away within a few seconds of that, its white areas fade to speckle. Left on the phone about
+  /// 10 s first, they stay clean; 6 s wasn't enough (2026-10-10). Optional, because it more than
+  /// doubles a write. See `writeToPanel`'s `cleanFinish`.
+  final Duration cleanFinishSettle;
+
+  /// How long the panel must sit in the field before its first refresh can run.
+  ///
+  /// The panel stores the field's energy and spends it on a refresh, so it needs charging first.
+  /// Logged on the 4.2", 2026-10-10: a spot-check refresh started ~1 s after a placement
+  /// succeeded 14% of the time when that placement came within 8 s of the last one, and ~60% after
+  /// a longer gap — while the write's own refresh, which runs after ~4 s of upload in the field,
+  /// never once failed after a passed spot check, even with the panel drained by that check.
+  final Duration chargeTime;
+
+  /// Whether a clean finish means anything for this panel.
+  bool get hasCleanFinish => cleanFinishSettle > Duration.zero;
+
+  /// [typicalWrite], plus the settle when [cleanFinish] asks for one.
+  Duration writeTime({bool cleanFinish = false}) =>
+      cleanFinish ? typicalWrite + cleanFinishSettle : typicalWrite;
 
   int get pixelsPerByte => 8 ~/ bitsPerPixel;
   int get frameBytesPerRow => pixelsPerRow ~/ pixelsPerByte;
@@ -151,8 +178,11 @@ class PanelDevice {
     blockSize: 250,
     // Measured with the fast waveform, which is the one the phone's field can power.
     nominalRefresh: Duration(milliseconds: 1700),
-    // Setup, transfer and refresh; plus `Rev22Protocol.settleTime` if that's ever nonzero.
+    // Setup, transfer and refresh.
     typicalWrite: Duration(seconds: 6),
+    cleanFinishSettle: Duration(seconds: 10),
+    // Below the ~4 s of upload that has always been enough; a first guess, to be read off the logs.
+    chargeTime: Duration(seconds: 3),
   );
 
   /// Every panel the app can drive.

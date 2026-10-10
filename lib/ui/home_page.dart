@@ -53,6 +53,7 @@ class _HomePageState extends State<HomePage>
   final _settings = SettingsStore();
 
   AppTab _tab = AppTab.text;
+
   /// The panel being composed for. Remembered, so the app opens on whichever was last in use —
   /// picked in Settings or detected.
   PanelDevice _device = PanelDevice.waveshare29G;
@@ -65,6 +66,10 @@ class _HomePageState extends State<HomePage>
   List<SavedDesign> _designs = const [];
 
   TagDetected? _tag;
+
+  /// When the panel now on the phone arrived. It needs some time in the field to charge before it
+  /// can refresh, so a write that starts later than that can skip the wait.
+  DateTime? _inFieldSince;
   TagLost? _lost;
   AdapterState? _adapter;
 
@@ -73,6 +78,10 @@ class _HomePageState extends State<HomePage>
 
   /// Mid-write on the 4.2", still finding out whether this spot can power a refresh.
   bool _checkingSpot = false;
+
+  /// Hold the panel after each write so it lifts away without its white fading. Remembered; see
+  /// `PanelDevice.cleanFinishSettle`.
+  bool _cleanFinish = false;
 
   int _percent = 0;
   String? _error;
@@ -119,6 +128,17 @@ class _HomePageState extends State<HomePage>
     );
     _reloadLibrary();
     _loadLastDevice();
+    _loadCleanFinish();
+  }
+
+  Future<void> _loadCleanFinish() async {
+    final on = await _settings.cleanFinish();
+    if (mounted) setState(() => _cleanFinish = on);
+  }
+
+  void _setCleanFinish(bool on) {
+    setState(() => _cleanFinish = on);
+    _settings.setCleanFinish(on);
   }
 
   Future<void> _loadLastDevice() async {
@@ -168,6 +188,7 @@ class _HomePageState extends State<HomePage>
         case TagDetected():
           _tag = event;
           _lost = null;
+          _inFieldSince = DateTime.now();
           // The whole point of arming: the panel arriving is what starts the write.
           if (_armedFrame != null && !_writing) {
             WidgetsBinding.instance.addPostFrameCallback((_) => _write());
@@ -194,6 +215,7 @@ class _HomePageState extends State<HomePage>
     setState(() {
       _tag = event;
       _lost = null;
+      _inFieldSince = DateTime.now();
       _armedFrame = null;
     });
     ScaffoldMessenger.of(
@@ -561,6 +583,8 @@ class _HomePageState extends State<HomePage>
         _channel,
         _device,
         frame,
+        cleanFinish: _cleanFinish,
+        inFieldSince: _inFieldSince,
         onProgress: (p) {
           if (mounted) setState(() => _percent = p);
         },
@@ -661,7 +685,7 @@ class _HomePageState extends State<HomePage>
                     writing: _writing,
                     checking: _checkingSpot,
                     percent: _percent,
-                    holdFor: _device.typicalWrite,
+                    holdFor: _device.writeTime(cleanFinish: _cleanFinish),
                     notice: _retryNotice,
                     onCancel: _disarm,
                   )
@@ -725,17 +749,16 @@ class _HomePageState extends State<HomePage>
                   child: SettingsView(
                     device: _device,
                     onDeviceChanged: _changeDevice,
+                    cleanFinish: _cleanFinish,
+                    onCleanFinishChanged: _setCleanFinish,
                   ),
                 ),
-                AppTab.saved => SizedBox(
-                  height: 340,
-                  child: LibraryView(
-                    device: _device,
-                    designs: _designs,
-                    onOpen: _openDesign,
-                    onRename: _renameDesign,
-                    onDelete: _deleteDesign,
-                  ),
+                AppTab.saved => LibraryView(
+                  device: _device,
+                  designs: _designs,
+                  onOpen: _openDesign,
+                  onRename: _renameDesign,
+                  onDelete: _deleteDesign,
                 ),
                 AppTab.text || AppTab.image || AppTab.token => _composer(),
               },

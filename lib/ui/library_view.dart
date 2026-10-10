@@ -39,7 +39,11 @@ class LibraryView extends StatelessWidget {
       );
     }
 
+    // Sits inside the page's own scroll view, so it takes its full height and scrolls with the
+    // page rather than being clipped to a fixed box.
     return ListView.separated(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: designs.length,
       separatorBuilder: (_, _) => const Divider(height: 1),

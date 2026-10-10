@@ -12,11 +12,18 @@ class SettingsView extends StatelessWidget {
   const SettingsView({
     required this.device,
     required this.onDeviceChanged,
+    required this.cleanFinish,
+    required this.onCleanFinishChanged,
     super.key,
   });
 
   final PanelDevice device;
   final ValueChanged<PanelDevice> onDeviceChanged;
+
+  /// Hold the panel after each write so it can be lifted away without its white fading. Only shown
+  /// for a panel that needs it.
+  final bool cleanFinish;
+  final ValueChanged<bool> onCleanFinishChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -42,6 +49,19 @@ class SettingsView extends StatelessWidget {
             if (picked != null && picked != device) onDeviceChanged(picked);
           },
         ),
+        if (device.hasCleanFinish) ...[
+          const SizedBox(height: 8),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Clean finish'),
+            subtitle: Text(
+              'Hold the panel ${device.cleanFinishSettle.inSeconds} seconds longer after each '
+              'write, so white areas stay clean when you lift it away.',
+            ),
+            value: cleanFinish,
+            onChanged: onCleanFinishChanged,
+          ),
+        ],
         const Divider(height: 32),
 
         Text('This panel', style: titles.titleMedium),

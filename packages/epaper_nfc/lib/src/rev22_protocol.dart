@@ -103,11 +103,15 @@ class Rev22Protocol {
   /// the same connection has never once worked — not the refresh alone, not after a controller
   /// reset, not after moving the panel to a spot that works — while lifting the panel away and
   /// putting it back has. So the retry belongs to the user, as a fresh connection.
+  ///
+  /// [settle] keeps the panel in the field that much longer once the refresh is done, with the
+  /// radio quiet, and only then reports 100 — see [PanelDevice.cleanFinishSettle].
   Future<void> writeFrame(
     PanelDevice device,
     Uint8List packed, {
     void Function(int percent)? onProgress,
     void Function()? onRefreshStarted,
+    Duration settle = Duration.zero,
   }) async {
     if (device.pixelsPerRow != 400 || device.frameRows != 300) {
       throw NfcFailure(
@@ -116,6 +120,7 @@ class Rev22Protocol {
       );
     }
 
+    _shareProgress(settle);
     await _begin();
     await _resetAndSetup();
     onProgress?.call(_setupShare);
@@ -126,22 +131,12 @@ class Rev22Protocol {
       throw const RefreshNotStarted();
     }
     await _sleep();
-    await _settle(onProgress);
+    await _settle(settle, onProgress);
   }
 
-  /// How long the panel must stay in the field after its refresh reports finished.
-  ///
-  /// Busy clearing is not the end. Pulled away ~3 s after it, white areas turned to speckle a second
-  /// later; left on the phone ~10 s first, the white stayed clean (2026-10-10, 4.2"). 6 s still
-  /// speckled. **Zero while the spot-check experiment runs** (see `panel_writer.dart`): that tests
-  /// whether the speckle comes from the spot check's extra refresh, in which case no wait is
-  /// needed at all. The radio is kept quiet throughout, and the write only reports done, and the
-  /// phone only buzzes, after it.
-  static const settleTime = Duration.zero;
-
-  /// Waits out [settleTime], moving the progress bar from [_refreshShare] to 100.
-  Future<void> _settle(void Function(int)? onProgress) async {
-    final slices = settleTime.inMilliseconds ~/ _pollInterval.inMilliseconds;
+  /// Waits out [settle], moving the progress bar from [_refreshShare] to 100.
+  Future<void> _settle(Duration settle, void Function(int)? onProgress) async {
+    final slices = settle.inMilliseconds ~/ _pollInterval.inMilliseconds;
     for (var slice = 1; slice <= slices; slice++) {
       await _delay(_pollInterval);
       onProgress?.call(_refreshShare + slice * (100 - _refreshShare) ~/ slices);
@@ -177,7 +172,12 @@ class Rev22Protocol {
   /// drained the panel's stored energy — under a second in a very weak spot, but in one measured
   /// case past 1.1 s and gone by 1.6 s, against 1.6-1.9 s for a full refresh. So it is judged at
   /// [_probeVerdict]. Single polls don't disturb a refresh (measured); only rapid ones did.
-  Future<bool> probe() async {
+  ///
+  /// [charge] is waited out first, quietly, so the panel has stored enough to refresh at all — see
+  /// [PanelDevice.chargeTime]. Without it, a panel put back soon after a failed attempt arrives
+  /// drained and fails again, which looked exactly like the spot getting worse.
+  Future<bool> probe({Duration charge = Duration.zero}) async {
+    if (charge > Duration.zero) await _delay(charge);
     await _begin();
     await _resetAndSetup();
     await _register(0x22, [_refreshMode]);
@@ -263,12 +263,24 @@ class Rev22Protocol {
   /// Share of the progress bar given to setup, then setup plus the block transfer, then those plus
   /// the refresh; the rest is [settleTime].
   ///
-  /// Measured on a 4.2": setup **0.8 s**, 60 blocks **3.2 s**, refresh **1.7 s**. Split roughly by
-  /// time, not by step count, so the bar moves steadily. If [settleTime] comes back, give it a
-  /// share in proportion (with 6 s it was 7 / 35 / 50).
-  static const int _setupShare = 14;
-  static const int _transferShare = 70;
-  static const int _refreshShare = 99;
+  /// Measured on a 4.2": setup **0.8 s**, 60 blocks **3.2 s**, refresh **1.7 s**, then any settle.
+  /// Split by time, not by step count, so the bar moves steadily — set per write by
+  /// [_shareProgress], since a clean finish more than doubles the time.
+  var _setupShare = 14;
+  var _transferShare = 70;
+  var _refreshShare = 99;
+
+  void _shareProgress(Duration settle) {
+    const setupMs = 800, transferMs = 3200, refreshMs = 1700;
+    final total = setupMs + transferMs + refreshMs + settle.inMilliseconds;
+    int upTo(int ms) => ms * 100 ~/ total;
+    _setupShare = upTo(setupMs);
+    _transferShare = upTo(setupMs + transferMs);
+    // Never 100 until the very end: done means safe to lift.
+    _refreshShare = settle == Duration.zero
+        ? 99
+        : upTo(setupMs + transferMs + refreshMs);
+  }
 
   /// Waits out the refresh. False if it never started; throws if it started and then went wrong.
   ///
