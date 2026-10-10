@@ -17,7 +17,7 @@ Diagnostics page (Settings → Diagnostics). Details in `docs/protocol.md`, open
   monitor wrongly declared it lost after *every* write. Each reset left the Pixel's NFC weaker, until
   no spot could power the refresh; only switching NFC off and on in settings cleared it. With the
   resets removed: **16 of 16 refreshes ran**, in spots that had failed all morning. All field-reset
-  code is gone (see the comment where `restartDiscovery` used to be in `MainActivity.kt`).
+  code is gone (see the comment on the lifecycle observer in `EpaperNfcPlugin.kt`).
 - **Not yet re-measured** without the resets: how much placement still matters, and whether this
   morning's "only some spots work" was partly the same degradation (some reset-like code existed
   before then too — `setDiscoveryTechnology` after `enableReaderMode`, also removed).
@@ -60,7 +60,7 @@ Diagnostics page (Settings → Diagnostics). Details in `docs/protocol.md`, open
   60 s presence check keeps Android holding the old tag). **Do not fix this with a field reset** —
   that is what wrecked the phone's NFC. Lifting the panel away cures it, and the app says so.
 - **Haptics:** Flutter's `HapticFeedback` plays only a faint 50 ms system tick. The app uses the
-  vibrator directly (`ApduChannel.buzz`, needs `VIBRATE`). Vibrations from a paused activity are
+  vibrator directly (`Haptics.buzz`, handled in `MainActivity`, needs `VIBRATE`). Vibrations from a paused activity are
   dropped (`ignored_background`).
 - Probe scripts used today live only in the session scratchpad; the useful ones are easy to
   regenerate from `docs/protocol.md`. `adb logcat -G 16M` on the phone, or full writes roll the log.
@@ -330,7 +330,7 @@ than trusting either reading.
 
 ## Open questions
 
-- **The idle removal probe must be off during a write.** `MainActivity.probe()` detects removal by
+- **The idle removal probe must be off during a write.** `EpaperNfcPlugin.probe()` detects removal by
   close/reconnect, because `isConnected` never touches the tag and we don't yet know a safe
   transceive for this chip. During a transfer that reconnect would be exactly the interruption we're
   avoiding — M2 must suspend it. Once M5 documents the protocol, replace it with a real status read.
@@ -343,6 +343,14 @@ than trusting either reading.
   before writing the Kotlin shim, and record what you find here.
 
 ## Log
+
+- **2026-10-10** — NFC comms moved into `packages/epaper_nfc`, a local Flutter plugin: panel
+  definitions, frame layout, both protocols, tag events and the Kotlin radio (`EpaperNfcPlugin.kt`,
+  which now follows the activity's resume/pause through `flutter_plugin_android_lifecycle`).
+  Channels renamed `epaper_nfc/session` and `epaper_nfc/tag_events`; **logcat tag is now
+  `epapernfc`** (`adb logcat -s epapernfc`). The vibrator moved to its own `mtg_eink/haptics`
+  channel. Checked on the Pixel: reader mode goes on with the same flags (385) and toggles exactly
+  once each way across background/foreground. **Not yet written to a panel since the move.**
 
 - **2026-10-10** — Landscape for Text and Image, and MTG token art from a picture (M6/M8 in the
   plan). Built and unit-tested; **not yet written to either panel.** The quantiser now has a

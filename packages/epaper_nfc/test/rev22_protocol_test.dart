@@ -1,16 +1,14 @@
 import 'dart:typed_data';
 
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mtg_eink/models/panel_device.dart';
-import 'package:mtg_eink/nfc/apdu.dart';
-import 'package:mtg_eink/nfc/rev22_protocol.dart';
 
 const device = PanelDevice.waveshare42;
 
 /// Answers like the real 4.2" did on hardware: `9000` to everything, `6A00` to the password check,
 /// and a busy flag that is up for [busyPolls] polls after each refresh starts — except that the
 /// first [deadRefreshes] refreshes never raise it at all, as happened on hardware.
-class FakePanel extends ApduChannel {
+class FakePanel implements PanelTransport {
   FakePanel({
     this.busyPolls = 3,
     this.deadRefreshes = 0,
@@ -62,7 +60,7 @@ class FakePanel extends ApduChannel {
   }
 
   @override
-  Future<void> open({String tech = 'isoDep'}) async {}
+  Future<void> open() async {}
 
   @override
   Future<void> close() async {}

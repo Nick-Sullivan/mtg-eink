@@ -35,6 +35,11 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # Everything about talking to the panels: their definitions, frame layout, protocols and the
+  # radio. Kept in its own package so it can be published on its own later.
+  epaper_nfc:
+    path: packages/epaper_nfc
+
   # Picking a photo to put on the panel. Uses the system photo picker on modern Android, so it
   # needs no storage permission and no manifest changes.
   image_picker: ^1.1.2

@@ -58,14 +58,22 @@ Don't redo these. Evidence is in [`PROGRESS.md`](../PROGRESS.md).
 ## Architecture
 
 ```
+packages/epaper_nfc/              the panels, as a package: frame in, panel out
+  lib/src/panel_device.dart       each panel's geometry, inks and frame shape
+  lib/src/frame_layout.dart       the packed frame's bit layout
+  lib/src/*_protocol.dart         the two command sets, over PanelTransport
+  lib/src/nfc_session.dart        PanelTransport over the radio
+  android/.../EpaperNfcPlugin.kt  reader mode and the raw ISO-DEP channel
 lib/
-  models/epaper_display.dart      296x128, the four-colour palette, 9472 bytes
-  nfc/apdu.dart                   raw ISO-DEP channel over the MethodChannel
-  nfc/gseries_protocol.dart       the command set — all panel knowledge lives here
-  render/                         CustomPainter -> ui.Image -> exact four-colour pixels
-  ui/home_page.dart
-android/app/src/main/kotlin/com/nicksullivan/mtg_eink/MainActivity.kt
+  render/                         CustomPainter -> ui.Image -> exact ink pixels -> packed frame
+  ui/, services/, models/         the app: editors, tokens, the design library
+android/.../MainActivity.kt       the vibrator, nothing else
 ```
+
+**The package boundary** (2026-10-10): everything about talking to the panels moved into
+`packages/epaper_nfc`, a local Flutter plugin, so it can be published on its own later. It takes a
+packed frame and puts it on a panel; what the frame shows is the app's business. It can't import the
+app. To publish it: remove `publish_to: none`, add a README and licence.
 
 **Kotlin owns the radio and nothing else.** Reader mode and the presence-check delay cannot be set
 from Dart, and on this hardware they are not optional, so `nfc_manager` is not usable — it insists

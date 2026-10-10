@@ -1,16 +1,16 @@
 import 'dart:typed_data';
 
-import '../models/panel_device.dart';
-import 'apdu.dart';
 import 'gseries_protocol.dart';
+import 'panel_device.dart';
 import 'rev22_protocol.dart';
+import 'transport.dart';
 
 /// Writes a packed frame to whichever kind of panel [device] is, over an already-open [channel].
 ///
 /// The two protocols share nothing past the transport, so this is only a switch — each owns its
 /// own preamble, transfer and refresh.
 Future<void> writeToPanel(
-  ApduChannel channel,
+  PanelTransport channel,
   PanelDevice device,
   Uint8List frame, {
   void Function(int percent)? onProgress,

@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
-import '../models/panel_device.dart';
-import 'apdu.dart';
+import 'panel_device.dart';
+import 'transport.dart';
 
 /// The command set for Waveshare's **Rev2.2** NFC-Powered e-Paper boards.
 ///
@@ -22,7 +22,7 @@ class Rev22Protocol {
   }) : _delay = delay ?? Future<void>.delayed,
        _clock = clock ?? DateTime.now;
 
-  final ApduChannel _channel;
+  final PanelTransport _channel;
   final Future<void> Function(Duration) _delay;
   final DateTime Function() _clock;
 
@@ -282,15 +282,4 @@ class Rev22Protocol {
   }
 
   Future<void> _pause(int ms) => _delay(Duration(milliseconds: ms));
-}
-
-/// Every command was accepted, but the refresh didn't run, so the old picture is still up. It
-/// depends on where the panel sits on the phone; a fresh connection somewhere else is the cure, so
-/// the app treats this as "try again", not as an error.
-class RefreshNotStarted extends NfcFailure {
-  const RefreshNotStarted()
-    : super(
-        "Couldn't find a spot where the panel would refresh. Lift it away and put it back to try "
-        'again.',
-      );
 }

@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mtg_eink/models/panel_device.dart';
 import 'package:mtg_eink/models/saved_design.dart';
 import 'package:mtg_eink/models/token_content.dart';
 import 'package:mtg_eink/render/quantiser.dart';

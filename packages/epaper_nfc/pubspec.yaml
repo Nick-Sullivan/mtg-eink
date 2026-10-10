@@ -1,0 +1,30 @@
+name: epaper_nfc
+description: >-
+  Drive Waveshare's passive NFC-powered e-Paper panels from Android: panel definitions, the packed
+  frame layout, the panels' command sets, and the radio session they need.
+version: 0.0.1
+# Lives in the app's repository until it's ready to stand alone. Remove this line to publish.
+publish_to: none
+
+environment:
+  sdk: ^3.8.1
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Reader mode belongs to the host activity and must follow its resume/pause; this is the Flutter
+  # team's way for a plugin to see that lifecycle.
+  flutter_plugin_android_lifecycle: ^2.0.31
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.nicksullivan.epaper_nfc
+        pluginClass: EpaperNfcPlugin

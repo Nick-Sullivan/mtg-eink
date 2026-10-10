@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter/material.dart';
 
-import '../models/panel_device.dart';
 import '../models/token_content.dart';
 import '../render/canvas_painter.dart';
 import '../render/image_content.dart';

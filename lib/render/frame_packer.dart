@@ -1,7 +1,8 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import '../models/panel_device.dart';
+import 'package:epaper_nfc/epaper_nfc.dart';
+
 import 'quantiser.dart';
 
 /// Bridges a rendered `ui.Image` to the packed frame the panel expects.

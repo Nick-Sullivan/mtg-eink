@@ -58,20 +58,29 @@ sequence works anyway.
 
 ## Conventions
 
-- **Panel specifics live in `PanelDevice`** (`lib/models/panel_device.dart`) — geometry, palette,
-  block size, refresh timing. Nothing else hardcodes a dimension or a colour. Everything downstream
-  takes a `PanelDevice` parameter, so adding a second panel is an entry in `PanelDevice.supported`
-  rather than a hunt through the renderer. Two today: the 2.9" (G) and the 4.2" Rev2.2. Drawing
-  happens on a portrait **canvas**; only the packer maps it onto the controller's **frame**.
-- **Protocol knowledge lives in `lib/nfc/gseries_protocol.dart` and `lib/nfc/rev22_protocol.dart`**,
-  chosen by `lib/nfc/panel_writer.dart`. Kotlin owns the radio and
-  nothing else — it is a dumb `transceive` pipe, because reader mode and the presence-check delay
-  can't be set from Dart and `nfc_manager` insists on owning reader mode itself.
+- **Everything about talking to the panels lives in the `epaper_nfc` package**
+  (`packages/epaper_nfc/`, a local Flutter plugin the app depends on by `path:`), kept apart so it
+  can be published on its own later. The rule: **the package takes a packed frame and puts it on a
+  panel; the app decides what the frame shows.** Rendering, the quantiser, tokens, the design
+  library and the UI stay in the app. The package must never import the app.
+- **Panel specifics live in `PanelDevice`** (`packages/epaper_nfc/lib/src/panel_device.dart`) —
+  geometry, palette, block size, refresh timing. Nothing else hardcodes a dimension or a colour.
+  Everything downstream takes a `PanelDevice` parameter, so adding a panel is an entry in
+  `PanelDevice.supported` rather than a hunt through the renderer. Two today: the 2.9" (G) and the
+  4.2" Rev2.2. Drawing happens on a portrait **canvas**; only the packer maps it onto the
+  controller's **frame** (`frame_layout.dart`).
+- **Protocol knowledge lives in `gseries_protocol.dart` and `rev22_protocol.dart`** in the
+  package's `lib/src/`, chosen by `panel_writer.dart`. They talk through `PanelTransport`, so
+  they're pure Dart and tested against a fake panel. Kotlin (`EpaperNfcPlugin.kt`) owns the radio
+  and nothing else — it is a dumb `transceive` pipe, because reader mode and the presence-check
+  delay can't be set from Dart and `nfc_manager` insists on owning reader mode itself. It follows
+  the host activity's resume/pause; the app's `MainActivity` only drives the vibrator.
 - Commit at each milestone boundary so sessions have clean resume points.
-- `flutter analyze` clean and `flutter test` green before each commit. The suite is pure Dart and
-  runs in about a second — there is no excuse for skipping it.
+- `flutter analyze` clean and both suites green before each commit: `flutter test` for the app and
+  `flutter test packages/epaper_nfc` for the package — the root run does not include the package.
+  Both are pure Dart and run in seconds; there is no excuse for skipping them.
 - **The tests exist to protect findings that cost real hardware time.** `quantiser_test.dart` pins
-  the chroma weighting (without it every grey sky comes out pink) and `frame_packing_test.dart`
-  pins the 2-bits-per-pixel bit layout. Both were established by writing frames to the panel and
+  the chroma weighting (without it every grey sky comes out pink) and the package's
+  `frame_packing_test.dart` pins the 2-bits-per-pixel bit layout. Both were established by writing frames to the panel and
   photographing the result; neither fails loudly if broken, they just look wrong.
 - **Do not make commits.** Nick makes them. Stage nothing and leave the working tree for review.

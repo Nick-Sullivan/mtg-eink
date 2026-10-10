@@ -2,21 +2,18 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../models/panel_device.dart';
 import '../models/saved_design.dart';
 import '../models/token_content.dart';
-import '../nfc/apdu.dart';
-import '../nfc/panel_writer.dart';
-import '../nfc/rev22_protocol.dart';
-import '../nfc/tag_events.dart';
 import '../render/canvas_painter.dart';
 import '../render/image_content.dart';
 import '../render/quantiser.dart';
 import '../render/token_painter.dart';
 import '../services/design_store.dart';
+import '../services/haptics.dart';
 import '../services/settings_store.dart';
 import 'crop_view.dart';
 import 'image_editor.dart';
@@ -49,7 +46,8 @@ class _HomePageState extends State<HomePage>
     vsync: this,
   )..addListener(_onTabChanged);
 
-  final _channel = ApduChannel();
+  final _channel = NfcSession();
+  final _haptics = Haptics();
   final _textController = TextEditingController(text: 'HELLO');
   final _store = DesignStore();
   final _settings = SettingsStore();
@@ -596,8 +594,8 @@ class _HomePageState extends State<HomePage>
     // Both are "try again": stay armed, so bringing the panel back starts the write from the top.
     // A bad spot buzzes once, a finished write twice.
     final retry = refreshFailed || lost;
-    if (refreshFailed) _channel.buzz().catchError((_) {});
-    if (error == null) _channel.buzz(pulses: 2).catchError((_) {});
+    if (refreshFailed) _haptics.buzz();
+    if (error == null) _haptics.buzz(pulses: 2);
 
     if (!mounted) return;
     setState(() {

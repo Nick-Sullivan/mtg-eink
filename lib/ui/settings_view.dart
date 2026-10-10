@@ -1,7 +1,7 @@
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter/material.dart';
 
 import '../models/creature_art.dart';
-import '../models/panel_device.dart';
 import 'diagnostics_page.dart';
 
 /// Things you set once and then forget about.

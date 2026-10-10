@@ -1,5 +1,5 @@
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mtg_eink/nfc/probe_script.dart';
 
 void main() {
   test('parses commands, delays, guards and comments', () {

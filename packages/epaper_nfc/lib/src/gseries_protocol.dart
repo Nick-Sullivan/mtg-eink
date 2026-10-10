@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
-import '../models/panel_device.dart';
-import 'apdu.dart';
+import 'panel_device.dart';
+import 'transport.dart';
 
 /// The command set for the Waveshare NFC-Powered e-Paper **(G)** series.
 ///
@@ -14,7 +14,7 @@ import 'apdu.dart';
 class GSeriesProtocol {
   const GSeriesProtocol(this._channel);
 
-  final ApduChannel _channel;
+  final PanelTransport _channel;
 
   /// Select the NDEF application. Sent with no `Le` byte, exactly as the vendor app does.
   static const selectNdefApp = [

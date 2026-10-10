@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mtg_eink/models/panel_device.dart';
 import 'package:mtg_eink/models/token_content.dart';
 import 'package:mtg_eink/render/image_content.dart';
 import 'package:mtg_eink/render/quantiser.dart';

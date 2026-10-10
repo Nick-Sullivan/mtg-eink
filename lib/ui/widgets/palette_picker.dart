@@ -1,6 +1,6 @@
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter/material.dart';
 
-import '../../models/panel_device.dart';
 
 /// A labelled row of swatches — every ink the panel can print, and no others.
 ///

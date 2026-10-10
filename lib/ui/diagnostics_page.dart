@@ -1,18 +1,16 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../nfc/apdu.dart';
-import '../nfc/probe_script.dart';
-import '../nfc/tag_events.dart';
 
 /// Runs a hand-written command script against whatever panel is on the phone.
 ///
 /// The instrument for working out an unknown panel by trial and error. The script is a text file,
 /// `probe.txt`, pushed to the app's files directory with `adb`, so each experiment is an edit and a
-/// push rather than a rebuild. Every exchange is also logged to `adb logcat -s mtgeink` by the
+/// push rather than a rebuild. Every exchange is also logged to `adb logcat -s epapernfc` by the
 /// Kotlin side, so results can be read off the device without anyone transcribing hex.
 class DiagnosticsPage extends StatefulWidget {
   const DiagnosticsPage({super.key});
@@ -22,7 +20,7 @@ class DiagnosticsPage extends StatefulWidget {
 }
 
 class _DiagnosticsPageState extends State<DiagnosticsPage> {
-  final _channel = ApduChannel();
+  final _channel = NfcSession();
   final _log = <String>[];
   StreamSubscription<TagEvent>? _events;
 

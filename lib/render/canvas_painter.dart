@@ -1,9 +1,9 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter/material.dart';
 
-import '../models/panel_device.dart';
 import 'frame_packer.dart';
 import 'quantiser.dart';
 

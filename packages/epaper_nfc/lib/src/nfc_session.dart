@@ -1,24 +1,25 @@
 import 'package:flutter/services.dart';
 
+import 'transport.dart';
+
 /// A raw ISO-DEP channel to the panel, over the platform's reader mode.
 ///
 /// Kotlin owns the radio because reader mode and the presence-check delay can't be set from Dart,
 /// and on this hardware they are not optional — at the platform default the session dies within
 /// seconds. This class is the whole of that dependency: everything above it is pure Dart.
-class ApduChannel {
-  static const _channel = MethodChannel('mtg_eink/epaper');
+class NfcSession implements PanelTransport {
+  static const _channel = MethodChannel('epaper_nfc/session');
 
   /// [tech] is `isoDep` for every panel so far, or `nfcA` for raw frames from the diagnostics
   /// console.
+  @override
   Future<void> open({String tech = 'isoDep'}) =>
       _invoke<bool>('openSession', tech);
 
+  @override
   Future<void> close() => _invoke<bool>('closeSession');
 
-  /// [pulses] short buzzes from the phone's vibrator.
-  Future<void> buzz({int pulses = 1}) => _invoke<bool>('buzz', pulses);
-
-  /// Sends one APDU and returns the full response, status word included.
+  @override
   Future<Uint8List> transceive(List<int> apdu) async {
     final value = await _invoke<Object?>(
       'transceive',
@@ -28,7 +29,7 @@ class ApduChannel {
   }
 
   /// How the platform reports the panel leaving mid-session: out of range, or a handle invalidated
-  /// by a re-discovery. See `MainActivity.onNfcThread`, which sends `ClassName: message`.
+  /// by a re-discovery. See `onNfcThread` on the Kotlin side, which sends `ClassName: message`.
   static const _lostPrefixes = [
     'IOException',
     'TagLostException',
@@ -47,40 +48,3 @@ class ApduChannel {
     return reply['value'] as T;
   }
 }
-
-/// A failure talking to the panel. Expected, not exceptional — the panel is powered by the phone's
-/// field, so losing it mid-sequence is ordinary and the caller should offer a retry.
-class NfcFailure implements Exception {
-  const NfcFailure(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
-/// The panel left the field mid-session. Bringing it back is the retry.
-class PanelLost extends NfcFailure {
-  const PanelLost(super.message);
-}
-
-/// Helpers for reading ISO 7816-4 responses.
-extension ApduResponse on Uint8List {
-  /// The trailing status word, e.g. `9000`.
-  String get sw {
-    if (length < 2) return '????';
-    return toHex(sublist(length - 2));
-  }
-
-  bool get isOk => sw == '9000';
-
-  /// The response without its status word.
-  Uint8List get body => length < 2 ? Uint8List(0) : sublist(0, length - 2);
-}
-
-String toHex(List<int> bytes) =>
-    bytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join();
-
-String toSpacedHex(List<int> bytes) => bytes
-    .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
-    .join(' ');

@@ -1,8 +1,9 @@
 import 'dart:typed_data';
 import 'dart:ui';
 
+import 'package:epaper_nfc/epaper_nfc.dart';
+
 import '../render/quantiser.dart';
-import 'panel_device.dart';
 import 'token_content.dart';
 
 /// Which tab a saved design was made in, and so which tab reopens it.

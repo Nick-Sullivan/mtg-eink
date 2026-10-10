@@ -2,10 +2,10 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter/material.dart';
 
 import '../models/creature_art.dart';
-import '../models/panel_device.dart';
 import '../models/token_content.dart';
 import 'canvas_painter.dart';
 import 'frame_packer.dart';

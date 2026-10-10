@@ -1,10 +1,10 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:epaper_nfc/epaper_nfc.dart';
 import 'package:flutter/material.dart';
 
 import '../models/saved_design.dart';
-import '../models/panel_device.dart';
 import '../render/image_content.dart';
 
 /// The shelf of saved designs. Tap one to open it in the Image tab, ready to re-frame or re-send.
